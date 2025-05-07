@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 이미지 스타일 전송</title>
+</head>
+<body>
+    <h1>AI 스타일 이미지 업로드</h1>
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <label>스타일 이미지:</label>
+        <input type="file" name="style"><br><br>
+        <label>콘텐츠 이미지:</label>
+        <input type="file" name="content"><br><br>
+        <input type="submit" value="제출">
+    </form>
+
+    {% if result_data_url %}
+    <h2>결과 이미지</h2>
+    <img src="{{ result_data_url }}" alt="Result" style="max-width: 600px;">
+    {% endif %}
+</body>
+</html>
