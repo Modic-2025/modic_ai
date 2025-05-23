@@ -1,15 +1,20 @@
-from .model_loader import get_model
-from .style_transfer import run_style_transfer
 import subprocess
-import time
+from .StyleShot.style_shot import StyleShotModel
+from .StyTR2.stytr2 import StyTR2
+
+# from celery import shared_task
 
 
 def wait_for_result(content, style, prompt, preprocessor):
     try:
         # while not get_gpu_memory():
         #     time.sleep(10)
-        model_ref = get_model(preprocessor)
-        result = run_style_transfer(content, style, prompt, model_ref)
+        # model_ref = get_model(preprocessor)
+
+        # style_shot = StyleShotModel()
+        # result = style_shot.inference(content, style, prompt, preprocessor)
+        strtr2 = StyTR2()
+        result = strtr2.inference(content, style)
 
         return result
 
@@ -26,3 +31,11 @@ def get_gpu_memory():
         return True
     else:
         return False
+
+
+# @shared_task
+# def run_style_transfer(content, style, prompt, preprocessor):
+#     model_ref = get_model(preprocessor)
+#     result = run_style_transfer(content, style, prompt, model_ref)
+#
+#     return result
