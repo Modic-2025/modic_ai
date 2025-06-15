@@ -2,13 +2,15 @@ import subprocess
 from .StyleShot.style_shot import StyleShotModel
 from .StyTR2.stytr2 import StyTR2
 
+import time
+
 # from celery import shared_task
 
 
 def wait_for_result(content, style, prompt, preprocessor):
     try:
-        # while not get_gpu_memory():
-        #     time.sleep(10)
+        while not get_gpu_memory():
+            time.sleep(10)
         # model_ref = get_model(preprocessor)
 
         # style_shot = StyleShotModel()
@@ -27,7 +29,7 @@ def get_gpu_memory():
         ['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,nounits,noheader']
     )
     used, total = map(int, result.decode().strip().split(','))
-    if total - used > 5000:
+    if total - used > 1000:
         return True
     else:
         return False
