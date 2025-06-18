@@ -1,15 +1,17 @@
-import subprocess
 from .StyleShot.style_shot import StyleShotModel
-from .StyTR2.stytr2 import StyTR2
-
 import time
 
-# from celery import shared_task
+from celery import shared_task
+from django.db import transaction
+import uuid
+
+from .StyTR2.stytr2 import StyTR2
+from .utills import get_gpu_memory
 
 
 def wait_for_result(content, style, prompt, preprocessor):
     try:
-        while not get_gpu_memory():
+        while not get_gpu_memory("StyTR2"):
             time.sleep(10)
         # model_ref = get_model(preprocessor)
 
@@ -23,21 +25,3 @@ def wait_for_result(content, style, prompt, preprocessor):
     except Exception as e:
         print(e)
         return None
-
-def get_gpu_memory():
-    result = subprocess.check_output(
-        ['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,nounits,noheader']
-    )
-    used, total = map(int, result.decode().strip().split(','))
-    if total - used > 1000:
-        return True
-    else:
-        return False
-
-
-# @shared_task
-# def run_style_transfer(content, style, prompt, preprocessor):
-#     model_ref = get_model(preprocessor)
-#     result = run_style_transfer(content, style, prompt, model_ref)
-#
-#     return result
