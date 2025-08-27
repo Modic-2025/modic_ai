@@ -1,0 +1,1 @@
+OUTPUT_DIR = "./media/outputs"
