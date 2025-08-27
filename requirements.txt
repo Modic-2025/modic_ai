@@ -1,0 +1,6 @@
+boto3
+botocore
+pika
+requests
+python-dotenv
+openai
