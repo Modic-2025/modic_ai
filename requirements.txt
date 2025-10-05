@@ -4,3 +4,4 @@ pika
 requests
 python-dotenv
 openai
+matplotlib

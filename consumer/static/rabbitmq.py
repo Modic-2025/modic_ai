@@ -1,6 +1,5 @@
 import os
 
-
 # RabbitMQ
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST')
 REQUEST_QUEUE = os.getenv('REQUEST_QUEUE')

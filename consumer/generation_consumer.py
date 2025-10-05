@@ -105,12 +105,19 @@ def edit_image_from_text(
     #         return (fname, BytesIO(r.content), "image/png")
     #     else:
     #         raise ValueError(f"path_or_url 값이 잘못됨 {path_or_url}")
+    # def _open_binary(image_path: str):
+    #     key = image_path.lstrip("/")
+    #     resp = s3_client.get_object(Bucket=S3_BUCKET, Key=image_path)
+    #     data = resp["Body"].read()
+    #     fname = os.path.basename(key)
+    #     return fname, BytesIO(data), f"image/{fname.split('.')[-1].lower().replace('jpg','jpeg')}"
     def _open_binary(image_path: str):
-        resp = s3_client.get_object(Bucket=S3_BUCKET, Key=image_path)
+        key = image_path.lstrip("/")
+        resp = s3_client.get_object(Bucket=S3_BUCKET, Key=key)  # <-- Key=key 로!
         data = resp["Body"].read()
-        fname = os.path.basename(image_path)
-        print(2)
-        return (fname, BytesIO(data), "image/png")
+        fname = os.path.basename(key)
+        ctype = resp.get("ContentType", "image/png")  # S3에 저장한 ContentType 재사용
+        return fname, BytesIO(data), ctype
 
     files = {}
 
@@ -160,6 +167,13 @@ def edit_image_from_text(
     }
 
     resp = requests.post(url, headers=headers, files=files, data=data, timeout=120)
+
+    if not resp.ok:
+        try:
+            print("[OpenAI error payload]", resp.status_code, resp.text)
+        except Exception:
+            pass
+    resp.raise_for_status()
     # 파일 핸들러 정리 (requests가 닫지만 안전하게)
     try:
         base_fh.close()
@@ -191,43 +205,29 @@ def do_style_transfer(style_image_path):
 # ──────────────────────────────────────────────────────────────────────────────
 def build_system_instructions() -> str:
     return """
-너는 '이미지 편집 플래너'다. 아래 규칙을 지켜라.
+너는 '이미지 편집 플래너'다. 다음 규칙을 반드시 따른다.
 
-[image_task의 subtype 결정]
-- generate: 참조 없이 “새로/처음부터/만들어/그려”.
-- edit: 기존 이미지를 기반으로 하는 모든 편집(상세 편집 포함: 구성/리터칭/배경/텍스트 등).
-- recolor_object: 특정 객체+특정 색이 함께 언급되면 우선.
+[작업 타입 결정]
+- 이미지가 하나라도 주어지고 수정 요청이 있으면 subtype=edit (또는 recolor_object).
+- generate는 오직 입력 이미지가 전혀 없거나, 사용자가 새로운 지시로 생성을 요청한 경우.
 
-[베이스/참고 이미지 선택 규칙(편집/상세편집/스타일변환/리컬러에 적용)]
-- 반드시 'indices'의 첫 요소(indices[0])로 편집의 본 이미지(base)를 지정한다.
-  - base 선택은 images_summary 컨텍스트(목록)의 인덱스를 사용한다. 0=첫 번째, 1=두 번째 …; -1=가장 최근.
-- 참고 이미지가 필요하면 'reference_urls'에 0개 이상 채운다.
-  - URL이 없으면 해당 참고 이미지는 생략한다(빈 값 넣지 말 것).
+[베이스 선택 우선순위]
+1) uploads(images_path)가 비어있지 않다면: reference_urls[0] = uploads[0], indices는 비워둔다.
+2) uploads가 비어있고 chat에 이미지가 있다면: indices[0] = 해당 chat 이미지 인덱스(정수). -1 사용 금지.
+
+[참고 이미지]
+- 추가 참고가 필요하면 reference_urls에 뒤에 이어서 넣는다(HTTP(S) URL 또는 S3 Key 그대로, 검증/변환 금지).
 
 [프롬프트 작성]
-- generate일 때: generate_instructions에 'prompt' 내용을 구체적 생성 프롬프트로 작성. indices/reference_urls는 비워둔다.
-- edit일 때: 최대한 "prompt" 그대로 보존하여 'edit_instructions'에 구체적 편집 지시문 작성. 참고할 이미지가 있으면 reference url에서 특정 순서의 이미지를 구체적으로 언급해 edit_instructions 작성.
-- recolor_object는 가능하면 target_objects/target_colors도 채운다(길이 맞추기, 불일치 시 가능한 쌍만).
+- edit/recolor/style: 사용자의 요청을 구체화하여 edit_instructions에 작성.
+- 배경 교체 등 부분 편집일 때는 “피사체/전경/얼굴/손/의상/소지품은 유지, 해당 부분(배경 등)만 변경”을 명시적으로 포함.
+- style transfer 의도가 분명할 때만 style_transfer=true.
 
-[스타일 변환(style transfer)]
-- 화풍/스타일 전환 의도가 있으면 출력 스키마(툴 스키마)에서 'style_transfer': true 로 표시한다.
+[clarify]
+- uploads도 chat 이미지도 없고, 요청 의도도 불명확할 때만 needs_clarification=true.
 
-[출력 스키마(툴 파라미터)]
-- subtype: "generate" | "edit" | "recolor_object"     # 스타일 변환은 style_transfer=true
-- generate_instructions: string | null                # generate 전용
-- edit_instructions: string | null                    # edit/recolor/style 전용, 최대한 사용자의 "prompt" 내용을 유지한다.
-- indices: array<int>                                 # 편집 시 base는 indices[0]
-- reference_urls: array<string>                       # http(s) URL 혹은 S3키, "링크 확인하지 말기!"
-- target_objects: array<string>
-- target_colors: array<string>
-- image_description: string | null                    # 생성할 이미지에 대한 간단한 설명. 모호한 경우를 제외하고 필요
-- style_transfer: boolean
-- needs_clarification: boolean
-- chat_summary: string                                # 기존의 채팅과 새로운 prompt을 바탕으로 새롭게 chat summary 작성.
-- reason: string
-
-[모호성 처리]
-- 핵심 정보가 부족하면 needs_clarification=true로 하고 reason에 부족한 항목 명시. 이 경우 image_description은 null.
+[출력 형식]
+- subtype, edit_instructions, indices, reference_urls, target_objects, target_colors, style_transfer, needs_clarification, reason, chat_summary를 반환.
 """.strip()
 
 
@@ -252,17 +252,17 @@ TOOLS = [{
                 "subtype": {
                     "type": "string",
                     "enum": ["generate", "edit", "recolor_object"],
-                    "description": "이미지 작업 세부 타입(스타일 변환은 style_transfer=true)"
-                },
-                "indices": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": "히스토리 인덱스 리스트(0=첫 번째…; -1=가장 최근). 편집 시 base는 indices[0]"
+                    "description": "이미지 작업 세부 타입(스타일 변환은 style_transfer=true), 무조건 하나는 지정해야 됨."
                 },
                 "reference_urls": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "참고 이미지 URL 목록. 없으면 빈 배열"
+                    "description": "참고 이미지 목록. **http(s) URL 또는 S3 Key** 그대로 넣기(검증/변환 금지)."
+                },
+                "indices": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "chat 이미지 선택 시: indices[0] = chat#i의 i (정수). **-1 사용 금지**."
                 },
                 "generate_instructions": {"type": "string", "description": "이미지 '생성' 프롬프트(구체적으로)"},
                 "edit_instructions": {"type": "string", "description": "최대한 사용자의 prompt에 맞춰 편집/채색/스타일 변환 지시문(구체적으로)"},
@@ -343,26 +343,18 @@ def execute_image_task(
             print(f"[에러]: {e}")
             return False, f"[에러]: {e}", None
 
-    # 편집용 base 선택 (reference_urls[0] 우선 → indices[0] 맵핑)
     base_path = None
-
     if indices:
         cand = chat_image_map.get(indices[0])
-        if cand and cand.startswith(("http://", "https://")):
+        if cand:
             base_path = cand
 
-    if not base_path and reference_urls:
-        if reference_urls[0].startswith(("http://", "https://")):
-            base_path = reference_urls[0]
-
     if not base_path:
-        print("[에러] 편집 base 이미지를 찾지 못했습니다.")
-        return False, f"[에러] 편집 base 이미지를 찾지 못했습니다.", None
+        return False, "[에러] 편집 base 이미지를 찾지 못했습니다.", None
 
-    # 참고 이미지 목록(베이스 제외)
     extra_refs = []
     if reference_urls and len(reference_urls) > 1:
-        extra_refs = [u for u in reference_urls[1:] if u.startswith(("http://", "https://"))]
+        extra_refs = reference_urls[1:]
 
     # 편집 지시문
     edit_text = (edit_instructions or "").strip()
@@ -470,7 +462,7 @@ def classify_and_execute(
 
         # 이 턴의 contents를 순서대로 펼침
         for c in turn.get("contents", []):
-            ctype = c.get("type")
+            ctype = (c.get("type") or "").lower()
             if ctype == "text":
                 text = _safe(c.get("text", ""))
                 if text:
@@ -508,14 +500,13 @@ def classify_and_execute(
             #     continue
             # if not p.startswith(("http://", "https://")):
             #     raise ValueError(f"[에러] 업로드 URL이 http(s)가 아님. 무시: {p}")
-            content.append({"type": "text", "text": f"- upload#{j} | url={p}"})
-            content.append({"type": "image_url", "image_url": {"url": p}})
+            content.append({"type": "text", "text": f"- upload#{j} | s3_key={p}"})
     else:
         content.append({"type": "text", "text": "(업로드 풀 비어있음)"})
 
-    # ── 4) 요약/추가 맥락
-    if chat_summary:
-        content.append({"type": "text", "text": f"\n### chat_summary\n{_safe(chat_summary)}"})
+    # # ── 4) 요약/추가 맥락
+    # if chat_summary:
+    #     content.append({"type": "text", "text": f"\n### chat_summary\n{_safe(chat_summary)}"})
 
     print(content)
     # ── 5) route_scenario 호출: 텍스트+이미지 함께 전달
@@ -529,7 +520,6 @@ def classify_and_execute(
         tool_choice={"type": "function", "function": {"name": "route_scenario"}},
         temperature=0.2,
     )
-    print("Check")
     # ── 6) 툴 아웃풋 파싱
     choice = resp.choices[0]
     msg = choice.message
@@ -588,7 +578,7 @@ def classify_and_execute(
     image_description = args.get("image_description", "")
 
     # 편집 계열인데 base 후보가 없을 때 업로드 첫 http URL로 폴백  #
-    if subtype != "generate" and not indices and not reference_urls:
+    if subtype == "edit" and not indices and not reference_urls:
         raise ValueError("[에러] 편집 계열인데 base 후보가 없음 (uploads에 http(s) URL 없음)")
 
     print(f"[분류] action=image task(고정), subtype={subtype}, needs={needs}, style_transfer={style_transfer}")
@@ -599,7 +589,7 @@ def classify_and_execute(
 
     # ── 8) 이미지 작업 실행
     payload = {
-        "prompt": (prompt if (subtype == "generate") else None),
+        "prompt": prompt,
         "subtype": (subtype or "generate"),
         "indices": indices,  # chat 이미지 인덱스
         "reference_urls": reference_urls,  # chat/업로드/기타 모두 file://
