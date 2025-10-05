@@ -659,7 +659,7 @@ def on_message(channel, method, properties, body):
                 "chatSummary": message["chat_summary"],
                 "fromStyleImage": message["style_transfer"]
             }
-            channel.basic_publish(exchange='', routing_key=RESPONSE_QUEUE, body=json.dumps(message))
+            channel.basic_publish(exchange='', routing_key=IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, body=json.dumps(message))
             channel.basic_ack(delivery_tag=method.delivery_tag)
 
         elif success == "clarify":
@@ -670,7 +670,7 @@ def on_message(channel, method, properties, body):
                 "textContext": message["reason"],
                 "chatSummary": message["chat_summary"],
             }
-            channel.basic_publish(exchange='', routing_key=RESPONSE_QUEUE, body=json.dumps(message))
+            channel.basic_publish(exchange='', routing_key=IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, body=json.dumps(message))
             channel.basic_ack(delivery_tag=method.delivery_tag)
 
         elif success == "error":
@@ -680,7 +680,7 @@ def on_message(channel, method, properties, body):
                 "chatSummary": chat_summary
             }
             print(f"에러 발생: {message}")
-            channel.basic_publish(exchange='', routing_key=RESPONSE_QUEUE, body=json.dumps(message))
+            channel.basic_publish(exchange='', routing_key=IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, body=json.dumps(message))
             channel.basic_ack(delivery_tag=method.delivery_tag)
         else:
             print(f"Fatal error detected: You need to check the error message code({success}) in classify_and_execute!")
@@ -693,10 +693,10 @@ def on_message(channel, method, properties, body):
 
 def main():
     context = ssl.create_default_context()
-    credentials = pika.PlainCredentials(RABBITMQ_USERNAME, RABBITMQ_PASSWORD)
+    credentials = pika.PlainCredentials(IMAGE_GENERATION_CHAT_USERNAME, IMAGE_GENERATION_CHAT_PASSWORD)
     params = pika.ConnectionParameters(
-        host=RABBITMQ_HOST,
-        port=int(RABBITMQ_PORT),
+        host=IMAGE_GENERATION_CHAT_HOST,
+        port=int(IMAGE_GENERATION_CHAT_PORT),
         credentials=credentials,
         ssl_options=pika.SSLOptions(context)
     )
@@ -707,10 +707,10 @@ def main():
         'x-dead-letter-exchange': 'ai.image.request.dlx',
         'x-dead-letter-routing-key': 'ai.image.request.retry'
     }
-    channel.queue_declare(queue=REQUEST_QUEUE, durable=True, arguments=dlx_args)
-    channel.queue_declare(queue=RESPONSE_QUEUE, durable=True)
+    channel.queue_declare(queue=IMAGE_GENERATION_CHAT_QUEUE, durable=True, arguments=dlx_args)
+    channel.queue_declare(queue=IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, durable=True)
 
-    channel.basic_consume(queue=REQUEST_QUEUE, on_message_callback=on_message)
+    channel.basic_consume(queue=IMAGE_GENERATION_CHAT_QUEUE, on_message_callback=on_message)
     print("[🚀] 작업 대기 중...")
     channel.start_consuming()
 
