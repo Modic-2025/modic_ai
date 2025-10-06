@@ -51,6 +51,15 @@ def upload_to_s3(image_bytes):
     return s3_key, filename, image_name, extension
 
 
+def open_binary(image_path: str):
+    key = image_path.lstrip("/")
+    resp = s3_client.get_object(Bucket=S3_BUCKET, Key=key)  # <-- Key=key 로!
+    data = resp["Body"].read()
+    fname = os.path.basename(key)
+    ctype = resp.get("ContentType", "image/png")  # S3에 저장한 ContentType 재사용
+    return fname, BytesIO(data), ctype
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 1) 세부 이미지 생성/수정/변환 함수
 # ──────────────────────────────────────────────────────────────────────────────
@@ -111,13 +120,6 @@ def edit_image_from_text(
     #     data = resp["Body"].read()
     #     fname = os.path.basename(key)
     #     return fname, BytesIO(data), f"image/{fname.split('.')[-1].lower().replace('jpg','jpeg')}"
-    def _open_binary(image_path: str):
-        key = image_path.lstrip("/")
-        resp = s3_client.get_object(Bucket=S3_BUCKET, Key=key)  # <-- Key=key 로!
-        data = resp["Body"].read()
-        fname = os.path.basename(key)
-        ctype = resp.get("ContentType", "image/png")  # S3에 저장한 ContentType 재사용
-        return fname, BytesIO(data), ctype
 
     files = {}
 
