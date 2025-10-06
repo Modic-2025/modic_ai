@@ -124,12 +124,12 @@ def edit_image_from_text(
     files = {}
 
     # 필수: base image
-    base_name, base_fh, base_ct = _open_binary(image_path)
+    base_name, base_fh, base_ct = open_binary(image_path)
     files["image"] = (base_name, base_fh, base_ct)
 
     # 선택: mask
     if mask_path:
-        mask_name, mask_fh, mask_ct = _open_binary(mask_path)
+        mask_name, mask_fh, mask_ct = open_binary(mask_path)
         files["mask"] = (mask_name, mask_fh, mask_ct)
 
     # 선택: reference images (여러 장)
@@ -138,7 +138,7 @@ def edit_image_from_text(
         if not ref:
             continue
         try:
-            rn, rf, rct = _open_binary(ref)
+            rn, rf, rct = open_binary(ref)
             # 서버가 인식하면 활용, 무시해도 안전
             files[f"ref_image_{i}"] = (rn, rf, rct)
         except Exception as e:
@@ -147,7 +147,7 @@ def edit_image_from_text(
     # 선택: style image
     if style_image_path:
         try:
-            sn, sf, sct = _open_binary(style_image_path)
+            sn, sf, sct = open_binary(style_image_path)
             files["style_image"] = (sn, sf, sct)
         except Exception as e:
             print(f"[경고] style 이미지 로드 실패({style_image_path}): {e}")
