@@ -202,8 +202,10 @@ def edit_image_from_text(
 def do_style_transfer(style_image_path, content_image):
     style_name, style_image, style_type = open_binary(style_image_path)
     result_image = wait_for_result(content_image, style_image, prompt=None, preprocessor=None)
-    print("[Style transfer]: not yet. style image path: style_image_path")
-    return None
+    if result_image is None:
+        return None
+    # print("[Style transfer]: not yet. style image path: style_image_path")
+    return result_image
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -326,6 +328,16 @@ def execute_image_task(
     style_image_path: Optional[str] = None,
     chat_image_map: Optional[Dict[int, str]] = None,
 ) -> (bool, str, object):
+    def _pil_to_bytesio(img: Image.Image) -> BytesIO:
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf
+
+    def _bytesio_to_pil(fp: BytesIO) -> Image.Image:
+        fp.seek(0)
+        im = Image.open(fp)
+        return im.convert("RGB") if im.mode != "RGB" else im
     chat_image_map = chat_image_map or {}
 
     # 출력 경로 준비
@@ -347,8 +359,12 @@ def execute_image_task(
 
             # 스타일 변환
             if style_transfer and style_image_path:
-                do_style_transfer(style_image_path, img)
+                content_fp = _pil_to_bytesio(img)
+                result_fp = do_style_transfer(style_image_path, content_fp)
                 print(f"[정보] style_transfer=True, style_image_path={style_image_path}")
+                if result_fp is None:
+                    return False, f"[이미지 생성 단계, 스타일 변환 에러]", None
+                img = _bytesio_to_pil(result_fp)
 
             return True, "", img
         except Exception as e:
@@ -361,12 +377,14 @@ def execute_image_task(
         if cand:
             base_path = cand
 
+    if not base_path and reference_urls:
+        base_path = reference_urls[0]
+
     if not base_path:
         return False, "[에러] 편집 base 이미지를 찾지 못했습니다.", None
 
-    extra_refs = []
-    if reference_urls and len(reference_urls) > 1:
-        extra_refs = reference_urls[1:]
+    # 참고 이미지는 base를 제외한 나머지
+    extra_refs = reference_urls[1:] if reference_urls and len(reference_urls) > 1 else []
 
     # 편집 지시문
     edit_text = (edit_instructions or "").strip()
@@ -394,8 +412,12 @@ def execute_image_task(
 
         # 스타일 변환
         if style_transfer and style_image_path:
-            do_style_transfer(style_image_path, img)
+            content_fp = _pil_to_bytesio(img)
+            result_fp = do_style_transfer(style_image_path, content_fp)
             print(f"[정보] style_transfer=True, style_image_path={style_image_path}")
+            if result_fp is None:
+                return False, f"[스타일 변환 에러]", None
+            img = _bytesio_to_pil(result_fp)
 
     except Exception as e:
         print(f"[에러] 편집 실패: {e}")
