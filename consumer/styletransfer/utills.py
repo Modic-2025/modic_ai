@@ -1,5 +1,5 @@
 import subprocess
-from static.minimum_gpu_memory import STYTR2_MIN_GPU_MEM
+from ..static.minimum_gpu_memory import STYTR2_MIN_GPU_MEM
 
 def get_gpu_memory(model_name):
     if model_name == "StyTR2":
