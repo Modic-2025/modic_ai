@@ -1,4 +1,3 @@
-# import osssl
 import pika
 import ssl
 import json
@@ -22,6 +21,9 @@ from openai import OpenAI
 from static.rabbitmq import *
 from static.model import *
 from static.s3 import *
+
+# Load style transfer model
+from styletransfer.tasks import wait_for_result
 
 
 def get_client() -> OpenAI:
@@ -197,7 +199,9 @@ def edit_image_from_text(
     return Image.open(BytesIO(base64.b64decode(b64)))
 
 
-def do_style_transfer(style_image_path):
+def do_style_transfer(style_image_path, content_image):
+    style_name, style_image, style_type = open_binary(style_image_path)
+    result_image = wait_for_result(content_image, style_image, prompt=None, preprocessor=None)
     print("[Style transfer]: not yet. style image path: style_image_path")
     return None
 
@@ -340,6 +344,12 @@ def execute_image_task(
             img = generate_image_from_text(gen_text, size="1024x1024")
             img.save(out_path)
             print(f"[완료] 생성 이미지 저장: {out_path}")
+
+            # 스타일 변환
+            if style_transfer and style_image_path:
+                do_style_transfer(style_image_path, img)
+                print(f"[정보] style_transfer=True, style_image_path={style_image_path}")
+
             return True, "", img
         except Exception as e:
             print(f"[에러]: {e}")
@@ -371,11 +381,6 @@ def execute_image_task(
     if not edit_text:
         edit_text = "이미지를 개선해줘"
 
-    # 스타일 변환 힌트
-    if style_transfer and style_image_path:
-        do_style_transfer(style_image_path)
-        print(f"[정보] style_transfer=True, style_image_path={style_image_path}")
-
     print(f"[편집] base={base_path}, refs={extra_refs}, instr={edit_text!r}")
     try:
         img = edit_image_from_text(
@@ -386,6 +391,12 @@ def execute_image_task(
             reference_image_paths=extra_refs,
             style_image_path=style_image_path if style_transfer else None,
         )
+
+        # 스타일 변환
+        if style_transfer and style_image_path:
+            do_style_transfer(style_image_path, img)
+            print(f"[정보] style_transfer=True, style_image_path={style_image_path}")
+
     except Exception as e:
         print(f"[에러] 편집 실패: {e}")
         return False, f"[에러] 편집 실패: {e}", None
