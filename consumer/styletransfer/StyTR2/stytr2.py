@@ -1,18 +1,15 @@
 import os
 import torch
 import torch.nn as nn
-from PIL import Image, UnidentifiedImageError, ImageOps
+from PIL import Image, UnidentifiedImageError
 import magic
-import cv2
-import numpy as np
 import uuid
 from io import BytesIO
 from torchvision import transforms
-from torchvision.utils import save_image
 
 from .models import StyTR as StyTR
 from .models import transformer as transformer
-from static.model_path import *
+from .static.model_path import *
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -148,8 +145,8 @@ class StyTR2:
             output_image = output_image.resize((output_w, output_h), Image.Resampling.LANCZOS)
 
             # 저장 및 버퍼 반환
-            result_path = f"./media/outputs/{uuid.uuid4()}.png"
-            output_image.save(result_path)
+            # result_path = f"./outputs/{uuid.uuid4()}.png"
+            # output_image.save(result_path)
             # save_image(output_image, result_path)
 
             buf = BytesIO()

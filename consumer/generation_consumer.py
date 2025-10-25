@@ -14,7 +14,7 @@ from PIL import Image
 import requests
 import base64
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from openai import OpenAI
 
 # Load env variable & Model
@@ -136,30 +136,31 @@ def edit_image_from_text(
 
     # 선택: reference images (여러 장)
     ref_list = reference_image_paths or []
-    for i, ref in enumerate(ref_list):
-        if not ref:
-            continue
-        try:
-            rn, rf, rct = open_binary(ref)
-            # 서버가 인식하면 활용, 무시해도 안전
-            files[f"ref_image_{i}"] = (rn, rf, rct)
-        except Exception as e:
-            print(f"[경고] reference 이미지 로드 실패({ref}): {e}")
+    # for i, ref in enumerate(ref_list):
+    #     if not ref:
+    #         continue
+    #     try:
+    #         rn, rf, rct = open_binary(ref)
+    #         # 서버가 인식하면 활용, 무시해도 안전
+    #         files[f"ref_image_{i}"] = (rn, rf, rct)
+    #     except Exception as e:
+    #         print(f"[경고] reference 이미지 로드 실패({ref}): {e}")
 
-    # 선택: style image
-    if style_image_path:
-        try:
-            sn, sf, sct = open_binary(style_image_path)
-            files["style_image"] = (sn, sf, sct)
-        except Exception as e:
-            print(f"[경고] style 이미지 로드 실패({style_image_path}): {e}")
+    # # 선택: style image
+    # if style_image_path:
+    #     try:
+    #         sn, sf, sct = open_binary(style_image_path)
+    #         files["style_image"] = (sn, sf, sct)
+    #     except Exception as e:
+    #         print(f"[경고] style 이미지 로드 실패({style_image_path}): {e}")
 
     # 참고/스타일 안내를 프롬프트에 주입
     ref_hint = ""
     if ref_list:
         ref_hint += f" 참고이미지 {len([r for r in ref_list if r])}장을 반영해 편집하라."
-    if style_image_path:
-        ref_hint += " style_image의 화풍/질감/톤을 참고하라."
+    # if style_image_path:
+    #     ref_hint += " style_image의 화풍/질감/톤을 참고하라."
+
     effective_prompt = (prompt or "").strip()
     if ref_hint:
         effective_prompt = (effective_prompt + " " + ref_hint).strip()
@@ -171,30 +172,15 @@ def edit_image_from_text(
     }
 
     resp = requests.post(url, headers=headers, files=files, data=data, timeout=120)
-
     if not resp.ok:
-        try:
-            print("[OpenAI error payload]", resp.status_code, resp.text)
-        except Exception:
-            pass
+        print("[OpenAI error payload]", resp.status_code, resp.text)
     resp.raise_for_status()
-    # 파일 핸들러 정리 (requests가 닫지만 안전하게)
-    try:
-        base_fh.close()
-        if mask_path:
-            mask_fh.close()
-        for k, v in files.items():
-            if k in ("image", "mask"):
-                continue
-            # v는 (name, fh, ctype)
-            try:
-                v[1].close()
-            except Exception:
-                pass
-    except Exception:
-        pass
 
-    resp.raise_for_status()
+    # 파일 정리
+    base_fh.close()
+    if mask_path:
+        mask_fh.close()
+
     b64 = resp.json()["data"][0]["b64_json"]
     return Image.open(BytesIO(base64.b64decode(b64)))
 
@@ -229,7 +215,7 @@ def build_system_instructions() -> str:
 [프롬프트 작성]
 - edit/recolor/style: 사용자의 요청을 구체화하여 edit_instructions에 작성.
 - 배경 교체 등 부분 편집일 때는 “피사체/전경/얼굴/손/의상/소지품은 유지, 해당 부분(배경 등)만 변경”을 명시적으로 포함.
-- style transfer 의도가 분명할 때만 style_transfer=true.
+- 스타일 변환 의도가 조금이라도 있으면 style_transfer=true. (그림체 변환, 스타일 변환 등) 하지만 주어진 그림체가 아닌 이전 사진을 활용해 스타일을 바꾸는 경우엔 style_transfer=false.
 
 [clarify]
 - uploads도 chat 이미지도 없고, 요청 의도도 불명확할 때만 needs_clarification=true.
@@ -404,7 +390,7 @@ def execute_image_task(
         img = edit_image_from_text(
             image_path=base_path,
             prompt=edit_text,
-            size="1024x1024",
+            size="auto",
             mask_path=None,
             reference_image_paths=extra_refs,
             style_image_path=style_image_path if style_transfer else None,
@@ -458,13 +444,10 @@ def classify_and_execute(
         return s
 
     def _is_http(u: str) -> bool:
-        return isinstance(u, str) and u.startswith(("http://", "https://"))
+        return isinstance(u, str) and u.startswith("https://")
 
     # ── 1) content 배열 준비 (텍스트+이미지를 한 메시지에 동시 포함)
-    content = []
-
-    # 안내/규칙 텍스트
-    content.append({
+    content = [{
         "type": "text",
         "text": (
             "아래는 한 번에 제공되는 대화 맥락과 이미지들입니다.\n"
@@ -477,15 +460,14 @@ def classify_and_execute(
             "3) edit/recolor/style_transfer면 사용자의 prompt를 바탕으로 edit_instructions 구체적으로 작성(모호 표현 금지)\n"
             "4) generate면 prompt를 구체화하고 indices/reference_urls 비움\n"
         )
-    })
-
-    content.append({
+    }, {
         "type": "text",
         "text": f"\n### [C] user prompt\n{_safe(prompt) or '(빈 prompt)'}"
-    })
+    }, {"type": "text", "text": "\n### [A] recent chat 섹션 (채팅 순서 그대로)\n"}]
+
+    # 안내/규칙 텍스트
 
     # ── 2) chat 섹션: 텍스트/이미지를 턴 순서대로 넣되, 이미지에는 chat#index 라벨 부여
-    content.append({"type": "text", "text": "\n### [A] recent chat 섹션 (채팅 순서 그대로)\n"})
     chat_image_map: Dict[int, str] = {}
     img_counter = 0
 
@@ -539,9 +521,9 @@ def classify_and_execute(
     else:
         content.append({"type": "text", "text": "(업로드 풀 비어있음)"})
 
-    # # ── 4) 요약/추가 맥락
-    # if chat_summary:
-    #     content.append({"type": "text", "text": f"\n### chat_summary\n{_safe(chat_summary)}"})
+    # ── 4) 요약/추가 맥락
+    if chat_summary:
+        content.append({"type": "text", "text": f"\n### chat_summary\n{_safe(chat_summary)}"})
 
     print(content)
     # ── 5) route_scenario 호출: 텍스트+이미지 함께 전달

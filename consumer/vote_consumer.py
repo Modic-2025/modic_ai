@@ -187,10 +187,10 @@ def on_message(channel, method, properties, body):
         task = json.loads(body)
 
         # request id
-        request_id = task['requestId']
+        voteId = task['voteId']
         # 큐 입력 JSON 구조 파싱
         original_image_path = task.get("originalImagePath", "")
-        new_image_path = task.get("newImagePath", "")
+        new_image_path = task.get("derivedImagePath", "")
 
         success, message = vote_ai(
             original_image_path,
@@ -199,12 +199,12 @@ def on_message(channel, method, properties, body):
         print(f"[DEBUG] images_path={new_image_path}")
         print(f"[DEBUG] success={success}")
         print(f"[DEBUG] message={message}")
-
+        if not success:
+            raise Exception(message)
         message = {
-            "isSuccess": True,
-            "requestId": request_id,
+            "voteId": voteId,
             "probability": message["probability"],
-            "reason": message["reason"],
+            # "reason": message["reason"],
         }
 
         channel.basic_publish(exchange='', routing_key=VOTE_AI_RESPONSE_QUEUE, body=json.dumps(message))
@@ -212,7 +212,7 @@ def on_message(channel, method, properties, body):
 
     except Exception as e:
         print("[❌] on_message 에러:", e)
-        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        # channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
 
 def main():
