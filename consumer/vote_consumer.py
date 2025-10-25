@@ -4,6 +4,8 @@ import json
 from openai import OpenAI
 import base64
 
+from sympy.stats.rv import probability
+
 from static.s3 import *
 from static.model import *
 from static.rabbitmq import *
@@ -201,9 +203,15 @@ def on_message(channel, method, properties, body):
         print(f"[DEBUG] message={message}")
         if not success:
             raise Exception(message)
+
+        probability = message["probability"]
+        if probability > 0.7:
+            decision = "APPROVE"
+        else:
+            decision = "DENY"
         message = {
             "voteId": voteId,
-            "probability": message["probability"],
+            "probability": decision,
             # "reason": message["reason"],
         }
 
