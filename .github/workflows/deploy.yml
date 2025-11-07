@@ -1,0 +1,29 @@
+name: deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  cd:
+    name: "CD"
+    runs-on: self-hosted
+    steps:
+      - name: ssh connection tes
+        run: |
+          cd /home/ubuntu/PycharmProjects/modic_ai/
+          conda activate worker
+          
+          git fetch origin main
+          git reset --hard origin/main
+          git pull
+          
+          pip install -r requirements.txt --upgrade
+          
+          cd consumer
+          for i in 1 2 3 4; do
+            echo "Restarting generation_consumer@$i ..."
+            echo "${{ secrets.PASSWD }}" | sudo -S systemctl restart generation_consumer@$i
+          done
+          
+          echo "All workers restarted successfully!"
