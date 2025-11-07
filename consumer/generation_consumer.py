@@ -238,82 +238,114 @@ def do_style_transfer(style_image_path, content_image):
 # - subtype, edit_instructions, indices, reference_urls, style_transfer, needs_clarification, reason, chat_summary, signals
 def build_system_instructions() -> str:
     return """
-너는 '이미지 편집 플래너'다. **이번 요청**을 기준으로 작업을 결정하고,
-- **base**: 실제로 수정/변환될 중심 이미지(정확히 1개, ★style_transfer 포함★)
-- **references**: 편집/변환을 돕는 참고 이미지들(0..N, **순서 중요**)
-- 기타 필드를 산출한다.
+너는 '이미지 편집 플래너'다. 이번 요청을 기준으로 작업을 결정한다.  
+- base: 실제로 수정·변환될 중심 이미지(1개, style_transfer 포함)  
+- references: 편집·변환을 돕는 참고 이미지들(0..N, 순서 중요)
+- subtype, style_transfer, reason 등 기타 필드도 함께 산출한다.
 
-[원칙 0: 우선순위 신호 (매우 중요)]
-1) **이번 요청의 필드가 최우선**이다.
-   - 이번 요청의 `prompt`, `images_path`가 있으면 과거 대화보다 우선한다.
-2) "최신 USER 발화"는 **가장 마지막 USER 턴**만을 의미한다.
-   - 예외: 그 발화에 "처음/두번째/방금 네가/내가 보낸" 등 **지시어**가 있으면,
-     지시어 해석을 위해 필요한 범위만 과거 턴을 조회한다.
-3) **과거에 언급된 객체명/지시문은 재사용 금지**. 현재 발화와 references에서만 명사/객체를 추출한다.
+Ⅰ. 입력 구조 및 참조 규칙
+chat에는 **최신 N개의 대화(turn)** 가 저장되어 있다.  
+각 대화는 다음 구조를 가진다:
 
-[1) 작업 타입 결정 – 규칙(R)과 적용 순서]
-- **R1. 업로드만**: 이번 요청이 `prompt`가 비었고 `images_path`만 존재 →
-  `subtype=style_transfer`, `style_transfer=true`, **base=uploads[0]**.
-- **R2. 스타일 전용**: 최신 USER 텍스트가 ‘스타일/화풍/그림체/style/스타일 변환’ 등
-  **스타일 키워드만** 포함(편집 키워드 없음) →
-  `subtype=style_transfer`, `style_transfer=true`.
-- **R3. 혼합**: 최신 USER 텍스트에 **스타일 키워드 + 편집 키워드**(교체/합성/삽입/제거/변경/수정/배경/옷/들고 등)가 **함께** 존재 →
-  `subtype=edit`, `style_transfer=true` (편집 후 스타일 적용).
-- **R4. 편집**: 요소의 교체/합성/삽입/제거/부분 수정/레이아웃 보정이 요구되면 →
-  `subtype=edit`.
-- **R5. 생성**: 입력 이미지 없이 새로 그려야 하면 →
-  `subtype=generate`.
+{
+  "role": "USER" | "AI",
+  "contents": [
+    {
+      "type": "TEXT" | "IMAGE",
+      "text": <문자열 or null>,
+      "imagePath": <이미지 경로 or null>,
+      "description": <이미지 설명 or null>,
+      "fromOriginImage": <bool>   # true면 스타일 변환이 적용된 이미지
+    },
+    ...
+  ]
+}
 
-※ 항상 **R1→R2→R3→R4→R5** 순서로 판정한다.
+설명:
+- `role`이 "USER"면 사용자가 보낸 메시지, "AI"면 AI가 생성한 응답이다.  
+- `contents` 배열 안에 여러 요소(TEXT 또는 IMAGE)가 포함될 수 있다.  
+- `imagePath`는 실제 이미지 파일 경로이며,  
+  `description`은 해당 이미지의 간단한 설명이다.  
+- `fromOriginImage=true`면 스타일 변환 결과 이미지임을 의미한다.
 
-[2) base / references 선택 규칙 (★필수★)
-— "바로 직전 이미지" 기본값을 사용자(UPLOAD/USER)로 고정]
-- **base**: 실제로 손댈/변환할 이미지 1개. `edit`와 `style_transfer` 모두 **반드시 지정**.
-- ★ 기본 선정 우선순위(명시 지시가 없을 때):
-  1) `images_path`가 **비어있지 않으면** → **base = uploads[0]** (최우선)
-  2) 아니면 **chat_images 중 가장 최근 `role=USER` 이미지**
-  3) ★ `role=AI` 이미지는 **사용자가 명시적으로 "네가 생성한/AI 이미지"라고 지칭한 경우에만** base 후보로 허용
-     (그 외에는 **기본값에서 절대 선택 금지**)
-  4) 위 모두 없으면 → `needs_clarification=true`
-- 지칭 해석 예:
-  • “A를 B처럼/로 바꿔줘” → base=A, references[0]=B
-  • “네가(너가) 생성한 이미지” → ★가장 최근 **AI** 이미지(명시 지시가 있을 때만)
-  • “내가/방금 보낸/올린 이미지” → 가장 최근 **USER** 이미지
-- **references**: base 편집/변환을 위한 참고 N개. **의미 있는 우선순서**로 정렬(0번이 가장 중요).
-  - base는 references에 절대 포함하지 않는다.
+chat 내에서 **시간 순서**는 보장되며,
+가장 앞의 항목(index 0)이 최신 메시지, 마지막이 가장 오래된 메시지다.
 
-[3) indices / reference_urls 채우기 (★반드시 base를 표현★)]
-- base가 **chat 이미지**면: `indices[0] =` 그 이미지의 chat 인덱스(i).
-  `reference_urls`에는 **base를 넣지 않는다**.
-- base가 **uploads(images_path)**면:
-  - `indices=[]`로 두고 **`reference_urls[0] = uploads[0]`**  ← 핸들러가 이것을 **base**로 사용한다(특수 규칙).
-- references에는 항상 **base를 제외**하고, 참고 이미지만 **순서대로** 넣는다.
-- **중요**: `subtype`이 `edit` 또는 `style_transfer`인 경우,
-  **반드시 `indices` 또는 `reference_urls[0]` 중 하나로 base를 지정**해야 한다.
-  (둘 다 비우지 말 것. 비울 경우 `needs_clarification=true`로 전환.)
+uploads(images_path): 이번 요청 업로드 목록.
 
-[4) 지시문 작성]
-- `edit_instructions`: “무엇은 유지 / 무엇을 어떻게 바꿀지”를 **짧고 구체적으로**.
-  references가 있으면 **번호로 지칭**(예: “references[0]의 질감/색을 반영…”).
-- `style_transfer=true`인 경우:
-  - 플래너는 **base만 정확히 지정**한다.(화풍/스타일 적용은 후처리이므로 별도 편집 지시 불필요)
-  - 스타일 가이드를 참고 이미지로 제공해야 한다면,
-    `references[0]`에 스타일 가이드 이미지를 넣고, `edit_instructions`에 “references[0]의 화풍/톤”을 짧게 기술.
+대화 내 이미지 지칭 규칙:
+- 사용자가 prompt로 요구한 사항(role, 개수)에 맞게 지칭해 아래 규칙에 맞게 base·references 선택하며 불필요한 이미지는 포함하지 않는다.
+- 사용자의 “처음/두번째/마지막/방금/이전/최근” 등 표현은 chat에서 이미지만 뽑아서 정해진 요구에 맞게 시간 순서(index)와 role로 자동 매핑. 
+  예:
+  • “처음” → 가장 오래된 이미지
+  • “두번째” → 처음 이미지의 다음 이미지
+  • “마지막/방금” → 가장 최신 이미지
+  • “네가 만든/AI가 생성한” → role=AI 이미지
+  • "내가 보낸" → role=USER 이미지
+- “지금 내가 보낸 N개의 이미지” → 최근 USER 업로드 N개를 대상으로 base·references 결정.
 
-[5) clarify (질의 필요 조건)]
-- ★ `images_path`도 비었고, chat에도 **USER 이미지가 전혀 없으며** 사용자가 "AI가 만든"이라고 지칭하지 않은 경우에만 `needs_clarification=true`.
-- 이유(`reason`)는 한국어로, 다음을 반드시 포함:
-  1) 무엇이 부족한지
-  2) 사용자가 바로 선택할 3~5개 옵션(번호 목록)
-  3) 진행 가능한 안전한 기본값 제안과 근거
-  4) 그대로 복붙 가능한 예시 답변 한 줄
+Ⅱ. 우선순위  
+1) 이번 요청의 prompt·images_path 최우선  
+2) 최신 USER 발화만 고려 (단, “처음/두번째/방금” 등 지시 있으면 과거 탐색)  
+3) 과거 객체 재사용 금지 (현재 요청만 반영)
 
-[signals]
-- 판정에 기여한 **키워드/지시어**를 배열로 반환(예: ["스타일 변환","교체","로켓"]).
+Ⅲ. 작업 타입 결정 (R-규칙, 순서 고정)  
+R-1 기능 설명 → needs_clarification=true, style_transfer=false, reason=기능 요약  
+R0 보류/정지 → needs_clarification=true, style_transfer=false, subtype 없음, reason=""  
+R1 업로드만(p 없음, images만) → subtype=style_transfer, style_transfer=true, base=uploads[0] (R-1/R0 제외)  
+R2 스타일 전용(스타일 키워드만) → subtype=style_transfer, style_transfer=true  
+R3 혼합(스타일+편집 키워드) → subtype=edit, style_transfer=true  
+R4 편집(교체/삽입/제거/변경/보정 등) → subtype=edit  
+R5 생성(입력 이미지 없음) → subtype=generate  
+적용 순서: R-1→R0→R1→R2→R3→R4→R5  
 
-[6) 출력]
-- `subtype`, `edit_instructions`, `indices`, `reference_urls`,
-  `style_transfer`, `needs_clarification`, `reason`, `chat_summary`, `signals`
+Ⅳ. base 선택 규칙 (결정 알고리즘)  
+기본: 업로드 있으면 uploads[0]을 base, 없으면 최신 chat 이미지 사용.  
+A. 명시 지시 존재 시 우선:  
+　• “AI가 만든/방금 만든” → 최신 role=AI  
+　• “내가/방금 보낸/업로드한” → uploads[0] 또는 최신 USER  
+　• “chat#k/upload#j/path” → 해당 항목  
+B. 명시 지시 없고 uploads 존재 → base=uploads[0]  
+C. uploads 없음 → 최신 AI 없으면 최신 USER  
+D. 모두 없으면 → needs_clarification=true  
+
+Ⅴ. references 선택 규칙  
+- base 제외 후, 편집·변환에 도움되는 이미지만 중요도 순 정렬.  
+- 업로드가 있어도 (R1 제외) base는 B 규칙으로 확정되며, 나머지는 references로만 사용.
+
+Ⅵ. 충돌/모호성 해소  
+- uploads 없고 base 지시 없을 때 최신 AI와 USER 모두 있으면 최신 AI를 base로.  
+- 잠정 USER base라도 같은 맥락의 최신 AI가 있으면 AI로 재결정.  
+- “스타일 변환도 적용해줘” 문구 + base 지시 없음 → 최신 AI 결과물을 base로.  
+
+Ⅶ. base / references 표기  
+base: { "source": "chat"|"upload", "index": <int> }  
+references: [ { "source": ..., "index": ... }, ... ]  
+index는 chat_images / uploads의 0-based 인덱스.  
+
+Ⅷ. 지시문 작성  
+edit_instructions: “무엇을 어떻게 바꿀지”를 구체적으로.  
+references가 있으면 번호로 지칭(예: “references[0] 색감 반영”).  
+style_transfer=true면 base만 지정 (화풍 적용은 후처리).  
+
+Ⅸ. clarify 조건  
+다음 중 하나면 needs_clarification=true:  
+1) chat·uploads 모두 없음  
+2) R-1(기능 설명)  
+3) R0(보류/정지)  
+reason 작성:  
+- 일반 clarify → 부족정보·옵션·기본값·예시 포함  
+- R-1 → 기능 요약  
+- R0 → ""  
+R-1/R0 시 subtype 미지정, image_description="".  
+
+Ⅹ. 이미지 설명  
+생성될 이미지를 1문장(120자 이내)으로 요약.  
+핵심 내용·변환 요소·스타일·질감 등을 간단히 표현.  
+예: “라면을 파스타로 바꾼 장면, 따뜻한 조명과 주황 포장.”  
+R0일 때 image_description="".  
+
+출력(JSON): subtype, base, references, generate_instructions, edit_instructions, style_transfer, needs_clarification, reason, chat_summary, signals, image_description
 """.strip()
 
 
@@ -322,18 +354,86 @@ SYSTEM_INSTRUCTIONS = build_system_instructions()
 # ──────────────────────────────────────────────────────────────────────────────
 # 2) 툴 스키마 (Chat Completions 형식) — 필드 추가 없이 설명 강화
 # ──────────────────────────────────────────────────────────────────────────────
+# TOOLS = [{
+#     "type": "function",
+#     "function": {
+#         "name": "route_scenario",
+#         "description": (
+#             "시스템 규칙과 **최신 USER 발화 우선 원칙**에 따라 작업 타입을 결정한다. "
+#             "규칙: ① 텍스트 없이 업로드만 있으면 style_transfer, "
+#             "② 최신 발화가 '스타일/화풍/그림체/style'만 포함하면 style_transfer, "
+#             "③ '스타일 변환+편집 키워드'가 함께면 edit + style_transfer=true. "
+#             "base가 chat 이미지면 indices[0]로 지정, base가 uploads면 indices는 비우고 reference_urls[0]에 uploads[0]을 넣는다. "
+#             "references에는 base를 절대 넣지 말고, 참고 우선순서대로 나열한다. "
+#             "edit/style이면 edit_instructions를 구체적으로 작성한다."
+#         ),
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "subtype": {
+#                     "type": "string",
+#                     "enum": ["generate", "edit", "style_transfer"],
+#                     "description": "이미지 작업 세부 타입(스타일 변환은 style_transfer=true), 무조건 하나는 지정해야 됨."
+#                 },
+#                 "reference_urls": {
+#                     "type": "array",
+#                     "items": {"type": "string"},
+#                     "description": "이미지 편집 시 참고할 이미지 목록. **http(s) URL 또는 S3 Key** 그대로 넣기(검증/변환 금지)."
+#                 },
+#                 "indices": {
+#                     "type": "array",
+#                     "items": {"type": "integer"},
+#                     "description": "chat 이미지 선택 시: indices[0] = image chat#i의 i (정수). **-1 사용 금지**. i는 0부터 시작."
+#                 },
+#                 "generate_instructions": {"type": "string", "description": "이미지 '생성' 프롬프트(구체적으로)"},
+#                 "edit_instructions": {"type": "string", "description": "최대한 사용자의 prompt에 맞춰 편집 지시문"},
+#
+#                 "image_description": {
+#                     "type": "string",
+#                     "description": "생성할 이미지에 대한 설명을 반환합니다. 이 설명은 나중에 이미지에 대해서 참고할 때 쓰입니다."
+#                 },
+#
+#                 "style_transfer": {
+#                     "type": "boolean",
+#                     "description": "스타일 변환 필요 여부(true면 style transfer)"
+#                 },
+#
+#                 "needs_clarification": {"type": "boolean", "description": "추가 정보 필요 여부"},
+#                 "reason": {
+#                     "type": "string",
+#                     "description":
+#                         "needs_clarification일 때 **한국어로** 작성. 반드시 포함: "
+#                         "1) 부족한 정보가 무엇인지, "
+#                         "2) 사용자가 바로 선택할 3~5개 옵션(번호 목록), "
+#                         "3) 진행 가능한 안전한 기본값 제안과 근거, "
+#                         "4) 그대로 복붙 가능한 예시 답변 한 줄. "
+#                         "무성의한 '빈 프롬프트' 같은 문구 금지. 사용자 관점에서 친절하고 구체적으로."
+#                 },
+#                 "signals": {
+#                     "type": "array",
+#                     "items": {"type": "string"},
+#                     "description": "탐지된 키워드/신호(디버깅용)"
+#                 },
+#                 "chat_summary": {"type": "string", "description": "지금까지의 채팅을 요약한 글. 최신 채팅을 기준으로 자세하게 정리."}
+#             },
+#             "required": ["needs_clarification"]
+#         }
+#     }
+# }]
 TOOLS = [{
     "type": "function",
     "function": {
         "name": "route_scenario",
         "description": (
-            "시스템 규칙과 **최신 USER 발화 우선 원칙**에 따라 작업 타입을 결정한다. "
-            "규칙: ① 텍스트 없이 업로드만 있으면 style_transfer, "
-            "② 최신 발화가 '스타일/화풍/그림체/style'만 포함하면 style_transfer, "
-            "③ '스타일 변환+편집 키워드'가 함께면 edit + style_transfer=true. "
-            "base가 chat 이미지면 indices[0]로 지정, base가 uploads면 indices는 비우고 reference_urls[0]에 uploads[0]을 넣는다. "
-            "references에는 base를 절대 넣지 말고, 참고 우선순서대로 나열한다. "
-            "edit/style이면 edit_instructions를 구체적으로 작성한다."
+            "이번 요청에 대해 작업 타입을 결정하고, base와 references를 '구조화'하여 반환한다. "
+            "규칙 요약: "
+            "• subtype ∈ {generate, edit, style_transfer} "
+            "• edit/style_transfer인 경우, base는 반드시 지정 "
+            "• base/references는 {source, index?, path?} 구조로 지정 "
+            "• source ∈ {chat, upload}. chat이면 index로 chat_images[i]를 가리키는 것을 우선, "
+            "  upload면 index로 uploads[j]를 가리키는 것을 우선(가능하면 path는 비워둔다). "
+            "• 별다른 지시가 없으면 base=가장 최신 chat 이미지(chat#max i). "
+            "• references에는 base를 절대 포함하지 않는다."
         ),
         "parameters": {
             "type": "object",
@@ -341,54 +441,90 @@ TOOLS = [{
                 "subtype": {
                     "type": "string",
                     "enum": ["generate", "edit", "style_transfer"],
-                    "description": "이미지 작업 세부 타입(스타일 변환은 style_transfer=true), 무조건 하나는 지정해야 됨."
+                    "description": "이미지 작업 세부 타입"
                 },
-                "reference_urls": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "이미지 편집 시 참고할 이미지 목록. **http(s) URL 또는 S3 Key** 그대로 넣기(검증/변환 금지)."
-                },
-                "indices": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": "chat 이미지 선택 시: indices[0] = image chat#i의 i (정수). **-1 사용 금지**. i는 0부터 시작."
-                },
-                "generate_instructions": {"type": "string", "description": "이미지 '생성' 프롬프트(구체적으로)"},
-                "edit_instructions": {"type": "string", "description": "최대한 사용자의 prompt에 맞춰 편집 지시문"},
 
-                "image_description": {
+                "base": {
+                    "type": "object",
+                    "description": (
+                        "실제 편집/변환할 대상 1개. "
+                        "source=chat이면 index(정수)로 chat_images[index]를 가리켜라. "
+                        "source=upload이면 index(정수)로 uploads[index]를 가리켜라. "
+                        "가능하면 path는 비우고 index만 사용한다."
+                    ),
+                    "properties": {
+                        "source": {"type": "string", "enum": ["chat", "upload"]},
+                        "index": {"type": "integer", "description": "chat_images/uploads의 인덱스"},
+                        "path":  {"type": "string", "description": "인덱스가 없을 때만 S3 Key/URL"}
+                    },
+                    "required": ["source"]
+                },
+
+                "references": {
+                    "type": "array",
+                    "description": (
+                        "참고 이미지들(0..N). base는 절대 포함하지 않는다. "
+                        "각 항목은 base와 동일 구조. 중요도 순서대로 나열(0이 가장 중요)."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "source": {"type": "string", "enum": ["chat", "upload"]},
+                            "index": {"type": "integer"},
+                            "path":  {"type": "string"}
+                        },
+                        "required": ["source"]
+                    }
+                },
+
+                "generate_instructions": {
                     "type": "string",
-                    "description": "생성할 이미지에 대한 설명을 반환합니다. 이 설명은 나중에 이미지에 대해서 참고할 때 쓰입니다."
+                    "description": "subtype=generate일 때의 생성 프롬프트(구체적)"
+                },
+                "edit_instructions": {
+                    "type": "string",
+                    "description": "subtype=edit일 때의 편집 지시문(구체적)"
                 },
 
                 "style_transfer": {
                     "type": "boolean",
-                    "description": "스타일 변환 필요 여부(true면 style transfer)"
+                    "description": "스타일 변환 필요 여부"
                 },
 
-                "needs_clarification": {"type": "boolean", "description": "추가 정보 필요 여부"},
+                "image_description": {
+                    "type": "string",
+                    "description": "결과물 설명(후속 참조용)"
+                },
+
+                "needs_clarification": {
+                    "type": "boolean",
+                    "description": (
+                        "추가 정보 필요 여부. "
+                        "edit/style_transfer인데 base를 특정할 수 없을 때 반드시 true"
+                    )
+                },
                 "reason": {
                     "type": "string",
-                    "description":
-                        "needs_clarification일 때 **한국어로** 작성. 반드시 포함: "
-                        "1) 부족한 정보가 무엇인지, "
-                        "2) 사용자가 바로 선택할 3~5개 옵션(번호 목록), "
-                        "3) 진행 가능한 안전한 기본값 제안과 근거, "
-                        "4) 그대로 복붙 가능한 예시 답변 한 줄. "
-                        "무성의한 '빈 프롬프트' 같은 문구 금지. 사용자 관점에서 친절하고 구체적으로."
+                    "description": (
+                        "needs_clarification이 true일 때만. 한국어로, "
+                        "부족한 정보 + 바로 고를 수 있는 3~5개 옵션 + 안전한 기본값/근거 + 예시 답변 한 줄"
+                    )
                 },
+
                 "signals": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "탐지된 키워드/신호(디버깅용)"
                 },
-                "chat_summary": {"type": "string", "description": "지금까지의 채팅을 요약한 글. 최신 채팅을 기준으로 자세하게 정리."}
+                "chat_summary": {
+                    "type": "string",
+                    "description": "대화 요약(최신 기준)"
+                }
             },
-            "required": ["needs_clarification"]
+            "required": ["subtype", "needs_clarification"]
         }
     }
 }]
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 3) 핸들러
@@ -397,13 +533,12 @@ def execute_image_task(
     *,
     prompt: Optional[str],
     subtype: str,
-    indices: List[int],
-    reference_urls: List[str],
+    base_path: Optional[str],            # NEW
+    extra_refs: List[str],               # NEW
     generate_instructions: Optional[str],
     edit_instructions: Optional[str],
     style_transfer: bool,
     style_image_path: Optional[str] = None,
-    chat_image_map: Optional[Dict[int, str]] = None,
 ) -> (bool, str, object):
     def _pil_to_bytesio(img: Image.Image) -> BytesIO:
         buf = BytesIO()
@@ -415,7 +550,6 @@ def execute_image_task(
         fp.seek(0)
         im = Image.open(fp)
         return im.convert("RGB") if im.mode != "RGB" else im
-    chat_image_map = chat_image_map or {}
 
     # 출력 경로 준비
     os.makedirs("outputs", exist_ok=True)
@@ -449,21 +583,6 @@ def execute_image_task(
             print(f"[에러]: {e}")
             return False, f"[에러]: {e}", None
 
-    base_path = None
-    if indices:
-        cand = chat_image_map.get(indices[0])
-        if cand:
-            base_path = cand
-
-    if not base_path and reference_urls:
-        base_path = reference_urls[0]
-
-    if not base_path:
-        return False, "[에러] 편집 base 이미지를 찾지 못했습니다.", None
-
-    # 참고 이미지는 base를 제외한 나머지
-    extra_refs = reference_urls[1:] if reference_urls and len(reference_urls) > 1 else []
-
     # 편집 지시문
     edit_text = (edit_instructions or "").strip()
     if not edit_text:
@@ -471,6 +590,9 @@ def execute_image_task(
 
     print(f"[편집] base={base_path}, refs={extra_refs}, instr={edit_text!r}")
     try:
+        if subtype in ("edit", "style_transfer") and not base_path:
+            return False, "[에러] base_path가 비었습니다.", None
+
         if subtype == "edit":
             img = edit_image_from_text(
                 image_path=base_path,
@@ -538,10 +660,14 @@ def classify_and_execute(
     def _safe(s):
         return (s or "").replace("\n", " ").strip()
 
-    def _bool(s):
-        if s != True and s != False:
-            raise ValueError(f"bool 값이 잘못됨 {s}")
-        return s
+    def _bool(v):
+        if v is True or v is False:
+            return v
+        if isinstance(v, str):
+            t = v.strip().lower()
+            if t in ("true", "1", "yes", "y"): return True
+            if t in ("false", "0", "no", "n"): return False
+        raise ValueError(f"bool 값이 잘못됨 {v}")
 
     def _is_http(u: str) -> bool:
         return isinstance(u, str) and u.startswith("https://")
@@ -551,6 +677,24 @@ def classify_and_execute(
             "type": "text",
             "text": json.dumps(obj, ensure_ascii=False)
         }
+
+    def _resolve_item(item, chat_image_map, uploads):
+        """item: {source: 'chat'|'upload', index?:int, path?:str} -> 실제 경로(str)"""
+        if not item or "source" not in item:
+            return None
+        src = item["source"]
+        idx = item.get("index", None)
+        pth = item.get("path", None)
+
+        if src == "chat":
+            if isinstance(idx, int) and (idx in chat_image_map):
+                return chat_image_map[idx]
+            return pth  # (fallback)
+        if src == "upload":
+            if isinstance(idx, int) and 0 <= idx < len(uploads):
+                return uploads[idx]
+            return pth  # (fallback)
+        return None
 
     # 1) 간단한 설명과 사용자 프롬프트 (비어있으면 빈 문자열로)
     content = [{
@@ -574,7 +718,7 @@ def classify_and_execute(
     chat_images = []
     img_counter = 0
 
-    for turn in (recent_chat or []):
+    for turn in list(recent_chat or []):
         role = turn.get("role", "user")
         for c in turn.get("contents", []):
             ctype = (c.get("type") or "").lower()
@@ -651,6 +795,7 @@ def classify_and_execute(
         return "error", f"[에러] arguments JSON 파싱 실패: {raw}"
 
     new_chat_summary = args.get("chat_summary", chat_summary)
+
     # ── 7) 결과 해석 (이미지 작업만 수행)
     needs = bool(args.get("needs_clarification", False))
     reason = args.get("reason", "")
@@ -661,54 +806,46 @@ def classify_and_execute(
 
     subtype = args.get("subtype")  # "generate" | "edit" | "style_transfer"
 
-    # 선택 결과 (정화(sanitize) 포함)  # ★
-    raw_indices = args.get("indices", []) or []  # chat 이미지 선택 시: indices[0] = i
-    raw_refs = args.get("reference_urls", []) or []  # 참고 URL
+    # NEW: base/references 구조 해석 유틸
+    uploads = [_safe(p) for p in (images_path or [])]  # 이미 위에서 만든 값과 동일 개념
 
-    signals = args.get("signals", "")
-    print("Signals:", signals)
+    # NEW: base / references 해석
+    base_obj = args.get("base")
+    base_path = _resolve_item(base_obj, chat_image_map, uploads)
 
-    # # reference_urls → http(s)만 남기기
-    # invalids = [u for u in raw_refs if not _is_http(u)]
-    # if invalids:
-    #     print(f"[정화] http(s) 아님 → 제거: {invalids}")
-    # reference_urls = [u for u in raw_refs if _is_http(u)]
-    reference_urls = raw_refs
-    # indices → chat_image_map에 실제 키가 있는 경우만 유지
-    indices = []
-    if raw_indices:
-        i0 = raw_indices[0]
-        if isinstance(i0, int) and (i0 in chat_image_map):
-            indices = [i0]
-        else:
-            print(f"[정화] 유효하지 않은 indices → 무시: {raw_indices}")
+    ref_objs = args.get("references", []) or []
+    extra_refs = []
+    for r in ref_objs:
+        rp = _resolve_item(r, chat_image_map, uploads)
+        if rp:
+            extra_refs.append(rp)
 
-    # 선택 결과
-    generation_prompt = args.get("generate_instructions") or prompt  # generate 프롬프트
-    edit_instructions = args.get("edit_instructions")  # edit 프롬프트
-
+    generation_prompt = args.get("generate_instructions") or prompt
+    edit_instructions = args.get("edit_instructions")
     style_transfer = bool(args.get("style_transfer", False))
     image_description = args.get("image_description", "")
 
-    # 편집 계열인데 base 후보가 없을 때 업로드 첫 http URL로 폴백  #
-    if subtype == "edit" and not indices and not reference_urls:
-        raise ValueError("[에러] 편집 계열인데 base 후보가 없음 (uploads에 http(s) URL 없음)")
+    # 필수 검증: 편집/스타일 변환이면 base 필수
+    if subtype in ("edit", "style_transfer") and not base_path:
+        print("[경고] 편집/스타일 변환인데 base 미지정 → clarify로 전환")
+        message = {"response": "편집/스타일 변환인데 base 이미지를 특정하지 못했습니다.",
+                   "chat_summary": new_chat_summary,
+                   "reason": "base가 비었습니다. 최근 업로드 또는 최신 USER 이미지를 base로 사용할지 선택해 주세요."}
+        return "clarify", message
 
     print(f"[분류] action=image task(고정), subtype={subtype}, needs={needs}, style_transfer={style_transfer}")
-    if indices:
-        print(f"[대상 indices(chat#i)] {indices}")
-    if reference_urls:
-        print(f"[참조 URL] {reference_urls}")
+    print(f"[대상 base] {base_path}")
+    if extra_refs:
+        print(f"[참조 refs] {extra_refs}")
 
     # ── 8) 이미지 작업 실행
     payload = {
         "prompt": prompt,
         "subtype": (subtype or "generate"),
-        "indices": indices,  # chat 이미지 인덱스
-        "reference_urls": reference_urls,  # chat/업로드/기타 모두 file://
+        "base_path": base_path,  # NEW
+        "extra_refs": extra_refs,  # NEW
         "generate_instructions": (generation_prompt if subtype == "generate" else None),
         "edit_instructions": (edit_instructions if (subtype != "generate") else None),
-        "chat_image_map": chat_image_map,
         "style_transfer": style_transfer,
         "style_image_path": style_image_path,
     }
@@ -805,27 +942,159 @@ def on_message(channel, method, properties, body):
 
 
 def main():
-    context = ssl.create_default_context()
-    credentials = pika.PlainCredentials(IMAGE_GENERATION_CHAT_USERNAME, IMAGE_GENERATION_CHAT_PASSWORD)
-    params = pika.ConnectionParameters(
-        host=IMAGE_GENERATION_CHAT_HOST,
-        port=int(IMAGE_GENERATION_CHAT_PORT),
-        credentials=credentials,
-        ssl_options=pika.SSLOptions(context)
-    )
-    connection = pika.BlockingConnection(params)
-    channel = connection.channel()
+    import ssl
+    import pika
+    from pika.exceptions import ChannelClosedByBroker
 
-    dlx_args = {
-        'x-dead-letter-exchange': 'ai.image.request.dlx',
-        'x-dead-letter-routing-key': 'ai.image.request.retry'
-    }
-    channel.queue_declare(queue=IMAGE_GENERATION_CHAT_QUEUE, durable=True, arguments=dlx_args)
-    channel.queue_declare(queue=IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, durable=True)
+    # 기존 ensure_* 유틸은 유지 (새 함수 추가 없음)
+    def reopen_channel(conn):
+        ch = conn.channel()
+        ch.basic_qos(prefetch_count=1)
+        try:
+            # 퍼블리셔 컨펌 켜서 전송 성공 여부를 명확히
+            ch.confirm_delivery()
+        except Exception:
+            pass
+        return ch
 
-    channel.basic_consume(queue=IMAGE_GENERATION_CHAT_QUEUE, on_message_callback=on_message)
-    print("[🚀] 작업 대기 중...")
-    channel.start_consuming()
+    def ensure_exchange_topic(ch, conn, name):
+        try:
+            ch.exchange_declare(exchange=name, exchange_type='topic', durable=True, passive=True)
+            return ch
+        except ChannelClosedByBroker:
+            ch = reopen_channel(conn)
+            ch.exchange_declare(exchange=name, exchange_type='topic', durable=True)
+            return ch
+
+    def ensure_queue(ch, conn, name, create_args=None):
+        try:
+            ch.queue_declare(queue=name, passive=True)
+            return ch
+        except ChannelClosedByBroker:
+            ch = reopen_channel(conn)
+            ch.queue_declare(queue=name, durable=True, arguments=(create_args or {}))
+            return ch
+
+    import time
+    while True:
+        connection = None
+        channel = None
+        try:
+            # --- 연결 설정 (하트비트/소켓타임아웃 상향) ---
+            context = ssl.create_default_context()
+            credentials = pika.PlainCredentials(IMAGE_GENERATION_CHAT_USERNAME, IMAGE_GENERATION_CHAT_PASSWORD)
+            params = pika.ConnectionParameters(
+                host=IMAGE_GENERATION_CHAT_HOST,
+                port=int(IMAGE_GENERATION_CHAT_PORT),
+                credentials=credentials,
+                ssl_options=pika.SSLOptions(context),
+                heartbeat=120,                 # ↑ 30 -> 120
+                blocked_connection_timeout=300,
+                socket_timeout=60,             # ↑ 명시
+                client_properties={"connection_name": "image-consumer"},
+            )
+            connection = pika.BlockingConnection(params)
+            channel = connection.channel()
+            channel.basic_qos(prefetch_count=1)
+            try:
+                channel.confirm_delivery()
+            except Exception:
+                pass
+
+            # --- DLX/큐 선언(존재 확인 포함) ---
+            channel = ensure_exchange_topic(channel, connection, 'ai.image.request.dlx')
+            channel = ensure_exchange_topic(channel, connection, 'ai.image.created.dlx')
+
+            channel = ensure_queue(
+                channel, connection,
+                'ai.image.request.retry.queue',
+                create_args={
+                    'x-message-ttl': 60000,
+                    'x-dead-letter-exchange': 'ai.image.request.exchange',
+                    'x-dead-letter-routing-key': 'ai.image.request',
+                },
+            )
+            channel.queue_bind(
+                queue='ai.image.request.retry.queue',
+                exchange='ai.image.request.dlx',
+                routing_key='ai.image.request.retry'
+            )
+
+            channel = ensure_queue(
+                channel, connection,
+                'ai.image.created.retry.queue',
+                create_args={
+                    'x-message-ttl': 60000,
+                    'x-dead-letter-exchange': 'ai.image.created.exchange',
+                    'x-dead-letter-routing-key': 'ai.image.created',
+                },
+            )
+            channel.queue_bind(
+                queue='ai.image.created.retry.queue',
+                exchange='ai.image.created.dlx',
+                routing_key='ai.image.created.retry'
+            )
+
+            channel = ensure_queue(
+                channel, connection,
+                IMAGE_GENERATION_CHAT_QUEUE,
+                create_args={
+                    'x-dead-letter-exchange': 'ai.image.request.dlx',
+                    'x-dead-letter-routing-key': 'ai.image.request.retry',
+                },
+            )
+            channel = ensure_queue(
+                channel, connection,
+                IMAGE_GENERATION_CHAT_RESPONSE_QUEUE,
+                create_args={
+                    'x-dead-letter-exchange': 'ai.image.created.dlx',
+                    'x-dead-letter-routing-key': 'ai.image.created.retry',
+                },
+            )
+
+            # --- 소비자 등록 ---
+            channel.basic_consume(
+                queue=IMAGE_GENERATION_CHAT_QUEUE,
+                on_message_callback=on_message,
+                auto_ack=False,
+            )
+
+            print("[🚀] 작업 대기 중...")
+            channel.start_consuming()
+
+        except KeyboardInterrupt:
+            print("[*] 종료 요청 감지, 정리 중...")
+            try:
+                if channel and channel.is_open:
+                    channel.stop_consuming()
+            except Exception:
+                pass
+            try:
+                if connection and (not connection.is_closed):
+                    connection.close()
+            except Exception:
+                pass
+            break
+
+        except Exception as e:
+            # 어떤 예외든 재연결
+            print(f"[경고] 소비 루프 예외 발생, 2초 후 재시도: {e}")
+            try:
+                if channel and channel.is_open:
+                    channel.stop_consuming()
+            except Exception:
+                pass
+            try:
+                if connection and (not connection.is_closed):
+                    connection.close()
+            except Exception:
+                pass
+            time.sleep(2.0)
+            continue
+
+        finally:
+            print("[✔] 연결 종료")
+
 
 # def main():
 #     json_path = "./consumer_test.json"
