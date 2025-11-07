@@ -9,8 +9,10 @@ jobs:
     name: "CD"
     runs-on: self-hosted
     steps:
-      - name: ssh connection tes
+      - name: Deploy and restart all consumer workers
         run: |
+          echo "🚀 Starting deployment of generation_consumer workers"
+          
           cd /home/ubuntu/PycharmProjects/modic_ai/
           conda activate worker
           
@@ -27,3 +29,4 @@ jobs:
           done
           
           echo "All workers restarted successfully!"
+
