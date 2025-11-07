@@ -1,19 +1,14 @@
-import pika
-import ssl
 import json
 import uuid
-# import botocore.exceptions
-
-# from io import BytesIO
-
-# from styletransfer.tasks import wait_for_result
-
+import sqlite3
+import time
+from contextlib import closing
+from pika.exceptions import ChannelClosedByBroker, StreamLostError, AMQPError
 from base64 import b64decode
 from io import BytesIO
 from PIL import Image
 import requests
 import base64
-
 from typing import List, Dict, Optional
 from openai import OpenAI
 
@@ -21,10 +16,56 @@ from openai import OpenAI
 from static.rabbitmq import *
 from static.model import *
 from static.s3 import *
-
-# Load style transfer model
 from styletransfer.tasks import wait_for_result
 
+
+IDEMPOTENT_DB_PATH = os.environ.get("IDEMPOTENT_DB_PATH", "/db/processed.db")
+os.makedirs(os.path.dirname(IDEMPOTENT_DB_PATH), exist_ok=True)
+with closing(sqlite3.connect(IDEMPOTENT_DB_PATH)) as conn:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS processed (
+            request_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+
+def mark_in_progress(request_id: str) -> bool:
+    """아직 처리되지 않았으면 기록 후 True, 이미 있으면 False"""
+    try:
+        with closing(sqlite3.connect(IDEMPOTENT_DB_PATH, timeout=5)) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status FROM processed WHERE request_id=?", (request_id,)).fetchone()
+            if row and row[0] in ("done", "in_progress"):
+                conn.commit()
+                return False
+            conn.execute("INSERT OR REPLACE INTO processed(request_id, status, updated_at) VALUES(?,?,CURRENT_TIMESTAMP)",
+                         (request_id, "in_progress"))
+            conn.commit()
+            return True
+    except sqlite3.Error:
+        return True  # DB 문제 시에도 처리 진행
+
+def mark_done(request_id: str):
+    try:
+        with closing(sqlite3.connect(IDEMPOTENT_DB_PATH, timeout=5)) as conn:
+            conn.execute("INSERT OR REPLACE INTO processed(request_id, status, updated_at) VALUES(?,?,CURRENT_TIMESTAMP)",
+                         (request_id, "done"))
+            conn.commit()
+    except sqlite3.Error:
+        pass
+
+def safe_publish(channel, routing_key, body, max_retries=3, sleep_sec=0.5):
+    """RabbitMQ publish 재시도"""
+    for attempt in range(1, max_retries + 1):
+        try:
+            channel.basic_publish(exchange='', routing_key=routing_key, body=body)
+            return True
+        except (ChannelClosedByBroker, StreamLostError, AMQPError, OSError) as e:
+            print(f"[경고] publish 실패({attempt}/{max_retries}): {e}")
+            time.sleep(sleep_sec)
+    return False
 
 def get_client() -> OpenAI:
     api_key = os.getenv("OPENAI_API_KEY")
@@ -63,9 +104,6 @@ def open_binary(image_path: str):
     return fname, BytesIO(data), ctype
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1) 세부 이미지 생성/수정/변환 함수
-# ──────────────────────────────────────────────────────────────────────────────
 def generate_image_from_text(prompt: str, size: str = "1024x1024") -> Image.Image:
     """
     OpenAI Images API(gpt-image-1)로 텍스트 프롬프트를 보내고
@@ -107,23 +145,6 @@ def edit_image_from_text(
     url = "https://api.openai.com/v1/images/edits"
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    # def _open_binary(path_or_url: str):
-    #     # path_or_url이 http(s)/file://면 가져오고, 아니면 로컬 파일 오픈
-    #     if path_or_url.startswith(("http://", "https://")):
-    #         r = requests.get(path_or_url, timeout=30)
-    #         r.raise_for_status()
-    #         # 파일명 유추
-    #         fname = os.path.basename(path_or_url.split("?")[0]) or "ref.png"
-    #         return (fname, BytesIO(r.content), "image/png")
-    #     else:
-    #         raise ValueError(f"path_or_url 값이 잘못됨 {path_or_url}")
-    # def _open_binary(image_path: str):
-    #     key = image_path.lstrip("/")
-    #     resp = s3_client.get_object(Bucket=S3_BUCKET, Key=image_path)
-    #     data = resp["Body"].read()
-    #     fname = os.path.basename(key)
-    #     return fname, BytesIO(data), f"image/{fname.split('.')[-1].lower().replace('jpg','jpeg')}"
-
     files = {}
 
     # 필수: base image
@@ -137,30 +158,11 @@ def edit_image_from_text(
 
     # 선택: reference images (여러 장)
     ref_list = reference_image_paths or []
-    # for i, ref in enumerate(ref_list):
-    #     if not ref:
-    #         continue
-    #     try:
-    #         rn, rf, rct = open_binary(ref)
-    #         # 서버가 인식하면 활용, 무시해도 안전
-    #         files[f"ref_image_{i}"] = (rn, rf, rct)
-    #     except Exception as e:
-    #         print(f"[경고] reference 이미지 로드 실패({ref}): {e}")
-
-    # # 선택: style image
-    # if style_image_path:
-    #     try:
-    #         sn, sf, sct = open_binary(style_image_path)
-    #         files["style_image"] = (sn, sf, sct)
-    #     except Exception as e:
-    #         print(f"[경고] style 이미지 로드 실패({style_image_path}): {e}")
 
     # 참고/스타일 안내를 프롬프트에 주입
     ref_hint = ""
     if ref_list:
         ref_hint += f" 참고이미지 {len([r for r in ref_list if r])}장을 반영해 편집하라."
-    # if style_image_path:
-    #     ref_hint += " style_image의 화풍/질감/톤을 참고하라."
 
     effective_prompt = (prompt or "").strip()
     if ref_hint:
@@ -195,47 +197,6 @@ def do_style_transfer(style_image_path, content_image):
     return result_image
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 1) 시스템 지침 (베이스/참고 이미지 선택 및 edit 프롬프트 생성 규칙 명시)
-# ──────────────────────────────────────────────────────────────────────────────
-# 너는 '이미지 편집 플래너'다. 사용자의 최신 요청을 기준으로 **작업 타입**, **base(편집 대상 1개)**, **references(참고 N개, 순서 중요)**를 결정해 결과를 반환한다.
-#
-# [chat_summary]
-# 채팅 요약은 단순 참고용으로만 사용
-#
-# [1) 작업 타입 결정 – 우선순위]
-# - R1. 기본적으로 스타(텍스트 없이) 업로드만 있음 → subtype=style_transfer, style_transfer=true, base=업로드.
-# - R2. 최신 USER 텍스트가 ‘스타일/화풍/그림체/style’만 포함(편집 키워드 없음) → subtype=style_transfer, style_transfer=true.
-# - R3. 최신 USER 텍스트에 ‘스타일 변환’과 편집 키워드(교체/합성/삽입/제거/옷/배경/수정/변경/들고 등)가 함께 있음 → subtype=edit, style_transfer=true.
-# - R4. 그 외: 일부 요소 수정/합성/교체/삽입/제거/부분 편집이면 subtype=edit. 입력 이미지 전혀 없고 새로 그려야 하면 subtype=generate.
-# ※ 항상 “최신 USER 발화 우선”. 과거에 edit 맥락이 있어도 최신 발화가 R1/R2면 style_transfer가 우선.
-#
-# [2) base / references 선택]
-# - base: 실제로 수정/변환될 중심 이미지 단 1개. 별다른 지칭이 없는 경우 최근 이미지가 Base(**중요**)
-# - references: base 편집을 위한 참고 이미지들(의미 있는 우선순서대로 나열; 0번이 가장 중요).
-# - 지칭 해석:
-#   • “A를 B처럼/로 바꿔줘” → base=A, references[0]=B
-#   • “네가(너가) 생성한 이미지” → 가장 최근 AI 이미지, role:AI
-#   • “내가/방금 보낸/올린 이미지” → 가장 최근 USER 이미지, role:USER
-# - 둘 다 언급되면 “수정 대상”을 base, 나머지 비교/참고 대상을 references로.
-#
-# [3) indices / reference_urls 기입]
-# - base가 chat 이미지면: indices[0] = (chat#i의 i). reference_urls에 base는 넣지 않는다.
-# - base가 uploads(images_path)이면: indices=[] 로 두고 reference_urls[0] = uploads[0] (핸들러가 이를 base로 사용).
-# - references에는 항상 base를 제외하고, 나머지 참고 이미지를 순서대로 넣는다(S3 키/URL 그대로, 검증/변환 금지).
-#
-# [4) 프롬프트 작성]
-# - edit_instructions: “무엇은 유지 / 무엇을 어떻게 바꿀지”를 구체적으로. reference가 있는 경우 references의 번호를 지칭.
-# - style_transfer=true가 함께 요구되면 화풍 적용은 후처리(핸들러 처리)로 가정. 스타일 옵션 재질문 금지(기본 스타일로 진행).
-#
-# [5) clarify]
-# - base/references를 전혀 특정할 수 없을 때만 needs_clarification=true.
-# - R1·R2 상황에서는 clarify 금지.
-#
-# [signals]
-# - 판단에 기여한 키워드 반환
-# [6) 출력]
-# - subtype, edit_instructions, indices, reference_urls, style_transfer, needs_clarification, reason, chat_summary, signals
 def build_system_instructions() -> str:
     return """
 너는 '이미지 편집 플래너'다. 이번 요청을 기준으로 작업을 결정한다.  
@@ -351,75 +312,6 @@ R0일 때 image_description="".
 
 SYSTEM_INSTRUCTIONS = build_system_instructions()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 2) 툴 스키마 (Chat Completions 형식) — 필드 추가 없이 설명 강화
-# ──────────────────────────────────────────────────────────────────────────────
-# TOOLS = [{
-#     "type": "function",
-#     "function": {
-#         "name": "route_scenario",
-#         "description": (
-#             "시스템 규칙과 **최신 USER 발화 우선 원칙**에 따라 작업 타입을 결정한다. "
-#             "규칙: ① 텍스트 없이 업로드만 있으면 style_transfer, "
-#             "② 최신 발화가 '스타일/화풍/그림체/style'만 포함하면 style_transfer, "
-#             "③ '스타일 변환+편집 키워드'가 함께면 edit + style_transfer=true. "
-#             "base가 chat 이미지면 indices[0]로 지정, base가 uploads면 indices는 비우고 reference_urls[0]에 uploads[0]을 넣는다. "
-#             "references에는 base를 절대 넣지 말고, 참고 우선순서대로 나열한다. "
-#             "edit/style이면 edit_instructions를 구체적으로 작성한다."
-#         ),
-#         "parameters": {
-#             "type": "object",
-#             "properties": {
-#                 "subtype": {
-#                     "type": "string",
-#                     "enum": ["generate", "edit", "style_transfer"],
-#                     "description": "이미지 작업 세부 타입(스타일 변환은 style_transfer=true), 무조건 하나는 지정해야 됨."
-#                 },
-#                 "reference_urls": {
-#                     "type": "array",
-#                     "items": {"type": "string"},
-#                     "description": "이미지 편집 시 참고할 이미지 목록. **http(s) URL 또는 S3 Key** 그대로 넣기(검증/변환 금지)."
-#                 },
-#                 "indices": {
-#                     "type": "array",
-#                     "items": {"type": "integer"},
-#                     "description": "chat 이미지 선택 시: indices[0] = image chat#i의 i (정수). **-1 사용 금지**. i는 0부터 시작."
-#                 },
-#                 "generate_instructions": {"type": "string", "description": "이미지 '생성' 프롬프트(구체적으로)"},
-#                 "edit_instructions": {"type": "string", "description": "최대한 사용자의 prompt에 맞춰 편집 지시문"},
-#
-#                 "image_description": {
-#                     "type": "string",
-#                     "description": "생성할 이미지에 대한 설명을 반환합니다. 이 설명은 나중에 이미지에 대해서 참고할 때 쓰입니다."
-#                 },
-#
-#                 "style_transfer": {
-#                     "type": "boolean",
-#                     "description": "스타일 변환 필요 여부(true면 style transfer)"
-#                 },
-#
-#                 "needs_clarification": {"type": "boolean", "description": "추가 정보 필요 여부"},
-#                 "reason": {
-#                     "type": "string",
-#                     "description":
-#                         "needs_clarification일 때 **한국어로** 작성. 반드시 포함: "
-#                         "1) 부족한 정보가 무엇인지, "
-#                         "2) 사용자가 바로 선택할 3~5개 옵션(번호 목록), "
-#                         "3) 진행 가능한 안전한 기본값 제안과 근거, "
-#                         "4) 그대로 복붙 가능한 예시 답변 한 줄. "
-#                         "무성의한 '빈 프롬프트' 같은 문구 금지. 사용자 관점에서 친절하고 구체적으로."
-#                 },
-#                 "signals": {
-#                     "type": "array",
-#                     "items": {"type": "string"},
-#                     "description": "탐지된 키워드/신호(디버깅용)"
-#                 },
-#                 "chat_summary": {"type": "string", "description": "지금까지의 채팅을 요약한 글. 최신 채팅을 기준으로 자세하게 정리."}
-#             },
-#             "required": ["needs_clarification"]
-#         }
-#     }
-# }]
 TOOLS = [{
     "type": "function",
     "function": {
@@ -526,9 +418,6 @@ TOOLS = [{
     }
 }]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 3) 핸들러
-# ──────────────────────────────────────────────────────────────────────────────
 def execute_image_task(
     *,
     prompt: Optional[str],
@@ -637,9 +526,6 @@ def execute_image_task(
     return True, "", img
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 4) 메인: 문자열 입력 → 툴 강제 호출 → 결과 파싱 → 핸들러 실행
-# ──────────────────────────────────────────────────────────────────────────────
 def classify_and_execute(
     prompt: str,
     images_path: list,
@@ -867,12 +753,22 @@ def classify_and_execute(
 
 def on_message(channel, method, properties, body):
     try:
-        print("[📥] 작업 수신:", body.decode("utf-8"))
-        task = json.loads(body)
+        raw_body = body.decode("utf-8")
+        print("[📥] 작업 수신:", raw_body)
+        task = json.loads(raw_body)
 
-        # request id
-        request_id = task['requestId']
-        # 큐 입력 JSON 구조 파싱
+        request_id = task.get("requestId")
+        if not request_id:
+            print("[경고] requestId 없음 → DLX로 이동")
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        # [PATCH] 멱등성 체크
+        if not mark_in_progress(request_id):
+            print(f"[멱등] 이미 처리된 요청 {request_id} → ACK 후 스킵")
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
         prompt = task.get("prompt", "")
         images_path = task.get("imagesPath", [])
         style_image_id = task.get("styleImageId", "")
@@ -881,22 +777,12 @@ def on_message(channel, method, properties, body):
         chat_summary = task.get("chatSummary", "")
 
         success, message = classify_and_execute(
-            prompt,
-            images_path,
-            style_image_id,
-            style_image_path,
-            recent_chat,
-            chat_summary)
-        print(f"[DEBUG] prompt={prompt}")
-        print(f"[DEBUG] images_path={images_path}")
-        print(f"[DEBUG] origin_image_id={style_image_id}, style_image_path={style_image_path}")
-        print(f"[DEBUG] recent chat count={len(recent_chat)}")
-        print(f"[DEBUG] chat_summary={chat_summary}")
+            prompt, images_path, style_image_id, style_image_path, recent_chat, chat_summary
+        )
 
+        # [PATCH] 상태별 응답 처리
         if success == "ok":
-            print(message)
-            print("Message 수신 성공")
-            message = {
+            resp = {
                 "isSuccess": True,
                 "requestId": request_id,
                 "isImageGenerated": True,
@@ -908,79 +794,45 @@ def on_message(channel, method, properties, body):
                 "chatSummary": message["chat_summary"],
                 "fromStyleImage": message["style_transfer"]
             }
-            channel.basic_publish(exchange='', routing_key=IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, body=json.dumps(message))
-            channel.basic_ack(delivery_tag=method.delivery_tag)
+            if safe_publish(channel, IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, json.dumps(resp)):
+                mark_done(request_id)
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+            else:
+                print("[에러] publish 실패 → DLX로 이동")
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
         elif success == "clarify":
-            message = {
+            resp = {
                 "isSuccess": True,
                 "requestId": request_id,
                 "isImageGenerated": False,
                 "textContext": message["reason"],
-                "chatSummary": message["chat_summary"],
+                "chatSummary": message["chat_summary"]
             }
-            channel.basic_publish(exchange='', routing_key=IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, body=json.dumps(message))
-            channel.basic_ack(delivery_tag=method.delivery_tag)
+            if safe_publish(channel, IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, json.dumps(resp)):
+                mark_done(request_id)
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+            else:
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
-        elif success == "error":
-            message = {
-                "requestId": request_id,
-                "isSuccess": False,
-                "chatSummary": chat_summary,
-                "error": str(message)
-            }
-            print(f"에러 발생: {message}")
-            channel.basic_publish(exchange='', routing_key=IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, body=json.dumps(message))
-            channel.basic_ack(delivery_tag=method.delivery_tag)
         else:
-            print(f"Fatal error detected: You need to check the error message code({success}) in classify_and_execute!")
+            print(f"[에러] 처리 실패: {success} / {message}")
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except Exception as e:
-        print("[❌] on_message 에러:", e)
+        print(f"[❌] on_message 예외: {e}")
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
 
 def main():
     import ssl
     import pika
-    from pika.exceptions import ChannelClosedByBroker
-
-    # 기존 ensure_* 유틸은 유지 (새 함수 추가 없음)
-    def reopen_channel(conn):
-        ch = conn.channel()
-        ch.basic_qos(prefetch_count=1)
-        try:
-            # 퍼블리셔 컨펌 켜서 전송 성공 여부를 명확히
-            ch.confirm_delivery()
-        except Exception:
-            pass
-        return ch
-
-    def ensure_exchange_topic(ch, conn, name):
-        try:
-            ch.exchange_declare(exchange=name, exchange_type='topic', durable=True, passive=True)
-            return ch
-        except ChannelClosedByBroker:
-            ch = reopen_channel(conn)
-            ch.exchange_declare(exchange=name, exchange_type='topic', durable=True)
-            return ch
-
-    def ensure_queue(ch, conn, name, create_args=None):
-        try:
-            ch.queue_declare(queue=name, passive=True)
-            return ch
-        except ChannelClosedByBroker:
-            ch = reopen_channel(conn)
-            ch.queue_declare(queue=name, durable=True, arguments=(create_args or {}))
-            return ch
-
     import time
+
     while True:
         connection = None
         channel = None
         try:
-            # --- 연결 설정 (하트비트/소켓타임아웃 상향) ---
             context = ssl.create_default_context()
             credentials = pika.PlainCredentials(IMAGE_GENERATION_CHAT_USERNAME, IMAGE_GENERATION_CHAT_PASSWORD)
             params = pika.ConnectionParameters(
@@ -988,126 +840,51 @@ def main():
                 port=int(IMAGE_GENERATION_CHAT_PORT),
                 credentials=credentials,
                 ssl_options=pika.SSLOptions(context),
-                heartbeat=120,                 # ↑ 30 -> 120
+                heartbeat=120,
                 blocked_connection_timeout=300,
-                socket_timeout=60,             # ↑ 명시
                 client_properties={"connection_name": "image-consumer"},
             )
             connection = pika.BlockingConnection(params)
             channel = connection.channel()
             channel.basic_qos(prefetch_count=1)
-            try:
-                channel.confirm_delivery()
-            except Exception:
-                pass
+            channel.confirm_delivery()
 
-            # --- DLX/큐 선언(존재 확인 포함) ---
-            channel = ensure_exchange_topic(channel, connection, 'ai.image.request.dlx')
-            channel = ensure_exchange_topic(channel, connection, 'ai.image.created.dlx')
-
-            channel = ensure_queue(
-                channel, connection,
-                'ai.image.request.retry.queue',
-                create_args={
-                    'x-message-ttl': 60000,
-                    'x-dead-letter-exchange': 'ai.image.request.exchange',
-                    'x-dead-letter-routing-key': 'ai.image.request',
-                },
-            )
-            channel.queue_bind(
-                queue='ai.image.request.retry.queue',
-                exchange='ai.image.request.dlx',
-                routing_key='ai.image.request.retry'
+            channel.queue_declare(
+                queue=IMAGE_GENERATION_CHAT_QUEUE,
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": "ai.image.request.dlx",
+                    "x-dead-letter-routing-key": "ai.image.request.retry"
+                }
             )
 
-            channel = ensure_queue(
-                channel, connection,
-                'ai.image.created.retry.queue',
-                create_args={
-                    'x-message-ttl': 60000,
-                    'x-dead-letter-exchange': 'ai.image.created.exchange',
-                    'x-dead-letter-routing-key': 'ai.image.created',
-                },
-            )
-            channel.queue_bind(
-                queue='ai.image.created.retry.queue',
-                exchange='ai.image.created.dlx',
-                routing_key='ai.image.created.retry'
-            )
-
-            channel = ensure_queue(
-                channel, connection,
-                IMAGE_GENERATION_CHAT_QUEUE,
-                create_args={
-                    'x-dead-letter-exchange': 'ai.image.request.dlx',
-                    'x-dead-letter-routing-key': 'ai.image.request.retry',
-                },
-            )
-            channel = ensure_queue(
-                channel, connection,
-                IMAGE_GENERATION_CHAT_RESPONSE_QUEUE,
-                create_args={
-                    'x-dead-letter-exchange': 'ai.image.created.dlx',
-                    'x-dead-letter-routing-key': 'ai.image.created.retry',
-                },
-            )
-
-            # --- 소비자 등록 ---
             channel.basic_consume(
                 queue=IMAGE_GENERATION_CHAT_QUEUE,
                 on_message_callback=on_message,
-                auto_ack=False,
+                auto_ack=False
             )
 
-            print("[🚀] 작업 대기 중...")
+            print("[🚀] 이미지 생성 작업 대기 중...")
             channel.start_consuming()
 
         except KeyboardInterrupt:
-            print("[*] 종료 요청 감지, 정리 중...")
-            try:
-                if channel and channel.is_open:
-                    channel.stop_consuming()
-            except Exception:
-                pass
-            try:
-                if connection and (not connection.is_closed):
-                    connection.close()
-            except Exception:
-                pass
+            print("[🧩] 사용자 종료 요청")
             break
-
         except Exception as e:
-            # 어떤 예외든 재연결
-            print(f"[경고] 소비 루프 예외 발생, 2초 후 재시도: {e}")
-            try:
-                if channel and channel.is_open:
-                    channel.stop_consuming()
-            except Exception:
-                pass
-            try:
-                if connection and (not connection.is_closed):
-                    connection.close()
-            except Exception:
-                pass
+            print(f"[경고] 소비자 루프 예외 발생: {e}")
             time.sleep(2.0)
             continue
-
         finally:
+            if channel and channel.is_open:
+                try:
+                    channel.stop_consuming()
+                except:
+                    pass
+            if connection and not connection.is_closed:
+                connection.close()
             print("[✔] 연결 종료")
 
 
-# def main():
-#     json_path = "./consumer_test.json"
-#     raw = False
-#     with open(json_path, "r", encoding="utf-8") as f:
-#         raw = f.read()
-#     if raw:
-#         # print(raw)
-#         on_message(raw.encode("utf-8"))
-#     else:
-#         print("reading json error")
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     client = get_client()
     main()
