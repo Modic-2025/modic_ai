@@ -4,7 +4,30 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+
 jobs:
+  ci:
+    name: "CI"
+    runs-on: self-hosted
+    steps:
+      - name: Activate conda env
+        shell: bash
+        run: |
+          cd /home/ubuntu/PycharmProjects/modic_ai
+          eval "$(conda shell.bash hook)"
+          conda activate worker
+      
+      - name: Install deps
+        shell: bash
+        run: |
+          pip install --upgrade -r requirements.txt
+
+      - name: Run classifier tests
+        shell: bash
+        run: |
+          cd consumer
+          python generation_consumer_test.py --cases "./generation_test"
+      
   cd:
     name: "CD"
     runs-on: self-hosted
@@ -30,6 +53,7 @@ jobs:
           done
           
           echo "All workers restarted successfully!"
+
 
 
 
