@@ -4,6 +4,7 @@ import sqlite3
 import time
 from contextlib import closing
 from pika.exceptions import ChannelClosedByBroker, StreamLostError, AMQPError
+
 from base64 import b64decode
 from io import BytesIO
 from PIL import Image
@@ -12,10 +13,11 @@ import base64
 from typing import List, Dict, Optional
 from openai import OpenAI
 
-# Load env variable & Model
 from static.rabbitmq import *
 from static.model import *
 from static.s3 import *
+from static.classifier_preprompt import SYSTEM_INSTRUCTIONS, TOOLS
+
 from styletransfer.tasks import wait_for_result
 
 
@@ -196,228 +198,9 @@ def do_style_transfer(style_image_path, content_image):
 
     return result_image
 
-
-def build_system_instructions() -> str:
-    return """
-너는 '이미지 편집 플래너'다. 이번 요청을 기준으로 작업을 결정한다.  
-- base: 실제로 수정·변환될 중심 이미지(1개, style_transfer 포함)  
-- references: 편집·변환을 돕는 참고 이미지들(0..N, 순서 중요)
-- subtype, style_transfer, reason 등 기타 필드도 함께 산출한다.
-
-Ⅰ. 입력 구조 및 참조 규칙
-chat에는 **최신 N개의 대화(turn)** 가 저장되어 있다.  
-각 대화는 다음 구조를 가진다:
-
-{
-  "role": "USER" | "AI",
-  "contents": [
-    {
-      "type": "TEXT" | "IMAGE",
-      "text": <문자열 or null>,
-      "imagePath": <이미지 경로 or null>,
-      "description": <이미지 설명 or null>,
-      "fromOriginImage": <bool>   # true면 스타일 변환이 적용된 이미지
-    },
-    ...
-  ]
-}
-
-설명:
-- `role`이 "USER"면 사용자가 보낸 메시지, "AI"면 AI가 생성한 응답이다.  
-- `contents` 배열 안에 여러 요소(TEXT 또는 IMAGE)가 포함될 수 있다.  
-- `imagePath`는 실제 이미지 파일 경로이며,  
-  `description`은 해당 이미지의 간단한 설명이다.  
-- `fromOriginImage=true`면 스타일 변환 결과 이미지임을 의미한다.
-
-chat 내에서 **시간 순서**는 보장되며,
-가장 앞의 항목(index 0)이 최신 메시지, 마지막이 가장 오래된 메시지다.
-
-uploads(images_path): 이번 요청 업로드 목록.
-
-대화 내 이미지 지칭 규칙:
-- 사용자가 prompt로 요구한 사항(role, 개수)에 맞게 지칭해 아래 규칙에 맞게 base·references 선택하며 불필요한 이미지는 포함하지 않는다.
-- 사용자의 “처음/두번째/마지막/방금/이전/최근” 등 표현은 chat에서 이미지만 뽑아서 정해진 요구에 맞게 시간 순서(index)와 role로 자동 매핑. 
-  예:
-  • “처음” → 가장 오래된 이미지
-  • “두번째” → 처음 이미지의 다음 이미지
-  • “마지막/방금” → 가장 최신 이미지
-  • “네가 만든/AI가 생성한” → role=AI 이미지
-  • "내가 보낸" → role=USER 이미지
-- “지금 내가 보낸 N개의 이미지” → 최근 USER 업로드 N개를 대상으로 base·references 결정.
-
-Ⅱ. 우선순위  
-1) 이번 요청의 prompt·images_path 최우선  
-2) 최신 USER 발화만 고려 (단, “처음/두번째/방금” 등 지시 있으면 과거 탐색)  
-3) 과거 객체 재사용 금지 (현재 요청만 반영)
-
-Ⅲ. 작업 타입 결정 (R-규칙, 순서 고정)  
-R-1 기능 설명 → needs_clarification=true, style_transfer=false, reason=기능 요약  
-R0 보류/정지 → needs_clarification=true, style_transfer=false, subtype 없음, reason=""  
-R1 업로드만(p 없음, images만) → subtype=style_transfer, style_transfer=true, base=uploads[0] (R-1/R0 제외)  
-R2 스타일 전용(스타일 키워드만) → subtype=style_transfer, style_transfer=true  
-R3 혼합(스타일+편집 키워드) → subtype=edit, style_transfer=true  
-R4 편집(교체/삽입/제거/변경/보정 등) → subtype=edit  
-R5 생성(입력 이미지 없음) → subtype=generate  
-적용 순서: R-1→R0→R1→R2→R3→R4→R5  
-
-Ⅳ. base 선택 규칙 (결정 알고리즘)  
-기본: 업로드 있으면 uploads[0]을 base, 없으면 최신 chat 이미지 사용.  
-A. 명시 지시 존재 시 우선:  
-　• “AI가 만든/방금 만든” → 최신 role=AI  
-　• “내가/방금 보낸/업로드한” → uploads[0] 또는 최신 USER  
-　• “chat#k/upload#j/path” → 해당 항목  
-B. 명시 지시 없고 uploads 존재 → base=uploads[0]  
-C. uploads 없음 → 최신 AI 없으면 최신 USER  
-D. 모두 없으면 → needs_clarification=true  
-
-Ⅴ. references 선택 규칙  
-- base 제외 후, 편집·변환에 도움되는 이미지만 중요도 순 정렬.  
-- 업로드가 있어도 (R1 제외) base는 B 규칙으로 확정되며, 나머지는 references로만 사용.
-
-Ⅵ. 충돌/모호성 해소  
-- uploads 없고 base 지시 없을 때 최신 AI와 USER 모두 있으면 최신 AI를 base로.  
-- 잠정 USER base라도 같은 맥락의 최신 AI가 있으면 AI로 재결정.  
-- “스타일 변환도 적용해줘” 문구 + base 지시 없음 → 최신 AI 결과물을 base로.  
-
-Ⅶ. base / references 표기  
-base: { "source": "chat"|"upload", "index": <int> }  
-references: [ { "source": ..., "index": ... }, ... ]  
-index는 chat_images / uploads의 0-based 인덱스.  
-
-Ⅷ. 지시문 작성  
-edit_instructions: “무엇을 어떻게 바꿀지”를 구체적으로.  
-references가 있으면 번호로 지칭(예: “references[0] 색감 반영”).  
-style_transfer=true면 base만 지정 (화풍 적용은 후처리).  
-
-Ⅸ. clarify 조건  
-다음 중 하나면 needs_clarification=true:  
-1) chat·uploads 모두 없음  
-2) R-1(기능 설명)  
-3) R0(보류/정지)  
-reason 작성:  
-- 일반 clarify → 부족정보·옵션·기본값·예시 포함  
-- R-1 → 기능 요약  
-- R0 → ""  
-R-1/R0 시 subtype 미지정, image_description="".  
-
-Ⅹ. 이미지 설명  
-생성될 이미지를 1문장(120자 이내)으로 요약.  
-핵심 내용·변환 요소·스타일·질감 등을 간단히 표현.  
-예: “라면을 파스타로 바꾼 장면, 따뜻한 조명과 주황 포장.”  
-R0일 때 image_description="".  
-
-출력(JSON): subtype, base, references, generate_instructions, edit_instructions, style_transfer, needs_clarification, reason, chat_summary, signals, image_description
-""".strip()
-
-
-SYSTEM_INSTRUCTIONS = build_system_instructions()
-
-TOOLS = [{
-    "type": "function",
-    "function": {
-        "name": "route_scenario",
-        "description": (
-            "이번 요청에 대해 작업 타입을 결정하고, base와 references를 '구조화'하여 반환한다. "
-            "규칙 요약: "
-            "• subtype ∈ {generate, edit, style_transfer} "
-            "• edit/style_transfer인 경우, base는 반드시 지정 "
-            "• base/references는 {source, index?, path?} 구조로 지정 "
-            "• source ∈ {chat, upload}. chat이면 index로 chat_images[i]를 가리키는 것을 우선, "
-            "  upload면 index로 uploads[j]를 가리키는 것을 우선(가능하면 path는 비워둔다). "
-            "• 별다른 지시가 없으면 base=가장 최신 chat 이미지(chat#max i). "
-            "• references에는 base를 절대 포함하지 않는다."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "subtype": {
-                    "type": "string",
-                    "enum": ["generate", "edit", "style_transfer"],
-                    "description": "이미지 작업 세부 타입"
-                },
-
-                "base": {
-                    "type": "object",
-                    "description": (
-                        "실제 편집/변환할 대상 1개. "
-                        "source=chat이면 index(정수)로 chat_images[index]를 가리켜라. "
-                        "source=upload이면 index(정수)로 uploads[index]를 가리켜라. "
-                        "가능하면 path는 비우고 index만 사용한다."
-                    ),
-                    "properties": {
-                        "source": {"type": "string", "enum": ["chat", "upload"]},
-                        "index": {"type": "integer", "description": "chat_images/uploads의 인덱스"},
-                        "path":  {"type": "string", "description": "인덱스가 없을 때만 S3 Key/URL"}
-                    },
-                    "required": ["source"]
-                },
-
-                "references": {
-                    "type": "array",
-                    "description": (
-                        "참고 이미지들(0..N). base는 절대 포함하지 않는다. "
-                        "각 항목은 base와 동일 구조. 중요도 순서대로 나열(0이 가장 중요)."
-                    ),
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "source": {"type": "string", "enum": ["chat", "upload"]},
-                            "index": {"type": "integer"},
-                            "path":  {"type": "string"}
-                        },
-                        "required": ["source"]
-                    }
-                },
-
-                "generate_instructions": {
-                    "type": "string",
-                    "description": "subtype=generate일 때의 생성 프롬프트(구체적)"
-                },
-                "edit_instructions": {
-                    "type": "string",
-                    "description": "subtype=edit일 때의 편집 지시문(구체적)"
-                },
-
-                "style_transfer": {
-                    "type": "boolean",
-                    "description": "스타일 변환 필요 여부"
-                },
-
-                "image_description": {
-                    "type": "string",
-                    "description": "결과물 설명(후속 참조용)"
-                },
-
-                "needs_clarification": {
-                    "type": "boolean",
-                    "description": (
-                        "추가 정보 필요 여부. "
-                        "edit/style_transfer인데 base를 특정할 수 없을 때 반드시 true"
-                    )
-                },
-                "reason": {
-                    "type": "string",
-                    "description": (
-                        "needs_clarification이 true일 때만. 한국어로, "
-                        "부족한 정보 + 바로 고를 수 있는 3~5개 옵션 + 안전한 기본값/근거 + 예시 답변 한 줄"
-                    )
-                },
-
-                "signals": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "탐지된 키워드/신호(디버깅용)"
-                },
-                "chat_summary": {
-                    "type": "string",
-                    "description": "대화 요약(최신 기준)"
-                }
-            },
-            "required": ["subtype", "needs_clarification"]
-        }
-    }
-}]
-
+# ──────────────────────────────────────────────────────────────────────────────
+# 3) 핸들러
+# ──────────────────────────────────────────────────────────────────────────────
 def execute_image_task(
     *,
     prompt: Optional[str],

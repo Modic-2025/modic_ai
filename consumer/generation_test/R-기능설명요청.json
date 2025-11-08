@@ -1,0 +1,40 @@
+{
+  "name": "R-기능설명요청",
+  "prompt": "너는 이런 이미지를 어떻게 만드는 거야?",
+  "uploads": [],
+  "chatSummary": "이전 대화에서 사용자가 캐릭터 이미지를 여러 화풍으로 요청했고, AI는 결과 이미지만 반환했다.",
+  "chat": [
+    {
+      "role": "AI",
+      "contents": [
+        { "type": "IMAGE", "imagePath": "s3://bucket/gen/char_picasso_2.png", "description": "피카소 화풍 변환 결과(두 번째 시도)", "fromOriginImage": true }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        { "type": "TEXT", "text": "좋아. 이번엔 더 각진 느낌으로 피카소 스타일을 강조해줘.", "imagePath": null, "description": null }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        { "type": "IMAGE", "imagePath": "s3://bucket/gen/char_vangogh_1.png", "description": "고흐 화풍 변환 결과", "fromOriginImage": true }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        { "type": "TEXT", "text": "이 캐릭터를 고흐 화풍으로 바꿔줘.", "imagePath": null, "description": null },
+        { "type": "IMAGE", "imagePath": "s3://bucket/user/char_base.png", "description": "사용자가 제공한 캐릭터 원본" }
+      ]
+    }
+  ],
+  "expected": {
+    "base": {},
+    "references": [],
+    "style_transfer": false,
+    "needs_clarification": true,
+    "edit_instructions_contains": null
+  }
+}
