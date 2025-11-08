@@ -1,0 +1,31 @@
+{
+  "name": "R3~R4_지칭_최신AIbase_두번째업로드ref",
+  "prompt": "이 캐릭터를 너가 생성한 이미지에 추가해줘",
+  "uploads": [
+    "s3://bucket/ai-request/upload_01.png"
+  ],
+  "chatSummary": "최근에 스타일 변환 결과물을 몇 장 생성함",
+  "chat": [
+    {
+      "role": "AI",
+      "contents": [
+        {"type": "IMAGE", "imagePath": "s3://bucket/gen/awehigopaeozsdgwea.png", "description": "", "fromOriginImage": true}
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {"type":"TEXT","text":"저 호랑이가 지금 내가 보낸 사진의 건물을 부수고 있는 그림을 만들어줘","imagePath":null,"description":null,"fromOriginImage":null},
+        {"type": "IMAGE", "imagePath": "s3://bucket/user/aseghersdretj.png", "description": ""}
+      ]
+    }
+  ],
+  "expected": {
+    "subtype": "edit",
+    "base": {"path": "s3://bucket/gen/awehigopaeozsdgwea.png"},
+    "references": [{"path": "s3://bucket/ai-request/upload_01.png"}],
+    "style_transfer": false,
+    "needs_clarification": false,
+    "edit_instructions_contains": ""
+  }
+}

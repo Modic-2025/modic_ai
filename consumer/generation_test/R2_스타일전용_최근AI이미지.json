@@ -1,0 +1,69 @@
+{
+  "name": "R2_스타일전용_최근AI이미지",
+  "prompt": "스타일 변환해줘. 색감은 자연스럽게 맞춰줘.",
+  "uploads": [],
+  "chatSummary": "이전에는 사용자 요청에 따라 합성(edit) 작업을 진행했고, 사용자가 지시하면 AI는 항상 이미지 결과만 반환했다.",
+  "chat": [
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "IMAGE",
+          "imagePath": "s3://bucket/gen/final_composite.png",
+          "description": "가장 최근 합성 결과(캐릭터 크기/배치 수정 반영)",
+          "fromOriginImage": false
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "캐릭터를 더 크게 해서 중앙에 배치해줘.",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "IMAGE",
+          "imagePath": "s3://bucket/gen/rough_comp.png",
+          "description": "첫 합성 결과(초안)",
+          "fromOriginImage": false
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "배경 사진에 이 캐릭터를 자연스럽게 합성해줘.",
+          "imagePath": null,
+          "description": null
+        },
+        {
+          "type": "IMAGE",
+          "imagePath": "s3://bucket/user/bg_photo.png",
+          "description": "사용자 제공 배경 사진"
+        },
+        {
+          "type": "IMAGE",
+          "imagePath": "s3://bucket/user/char_cutout.png",
+          "description": "사용자 제공 캐릭터 컷아웃"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "subtype": "style_transfer",
+    "base": { "path": "s3://bucket/gen/final_composite.png" },
+    "references": [],
+    "style_transfer": true,
+    "needs_clarification": false
+  }
+}

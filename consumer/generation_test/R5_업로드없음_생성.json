@@ -1,0 +1,14 @@
+{
+  "name": "R5_업로드없음_생성",
+  "prompt": "달빛 아래 호수 풍경을 사실적으로 그려줘",
+  "uploads": [],
+  "chat": [],
+  "expected": {
+    "subtype": "generate",
+    "base": {"path": "None"},
+    "references": [],
+    "style_transfer": false,
+    "needs_clarification": false,
+    "generate_instructions_contains": "호수"
+  }
+}
