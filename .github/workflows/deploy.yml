@@ -9,6 +9,8 @@ jobs:
   ci:
     name: "CI"
     runs-on: self-hosted
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - name: Run classifier tests
         shell: bash
@@ -46,6 +48,7 @@ jobs:
           done
           
           echo "All workers restarted successfully!"
+
 
 
 
