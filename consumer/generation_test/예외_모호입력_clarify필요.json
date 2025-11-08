@@ -1,0 +1,37 @@
+{
+  "name": "예외_모호입력_clarify필요",
+  "prompt": "그거 그냥 이거랑 느낌 맞춰서 대충… 아 그때 하던 거 이어서 하고 배경은 지난번 느낌으로? 아님 알아서 해줘.",
+  "uploads": [
+    "s3://bucket/ai-request/upload_bg_01.png"
+  ],
+  "chatSummary": "이전에는 사용자가 배경 교체와 합성을 번갈아 요청했고, AI는 요청 시마다 이미지만 반환했다.",
+  "chat": [
+    {
+      "role": "AI",
+      "contents": [
+        { "type": "IMAGE", "imagePath": "s3://bucket/gen/prev_result_latest.png", "description": "가장 최근 결과(합성 버전)", "fromOriginImage": false }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        { "type": "TEXT", "text": "아 이거 좀 더 밝게는 했었나? 기억이 안 나네.", "imagePath": null, "description": null }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        { "type": "IMAGE", "imagePath": "s3://bucket/gen/prev_result_v1.png", "description": "조명 수정 1차 시도", "fromOriginImage": false }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        { "type": "TEXT", "text": "그 전에 했던 거 말고 저거랑 이거 섞어서 예쁘게?", "imagePath": null, "description": null }
+      ]
+    }
+  ],
+  "expected": {
+    "needs_clarification": true
+  }
+}

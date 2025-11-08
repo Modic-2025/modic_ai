@@ -1,0 +1,13 @@
+{
+  "name": "R1_업로드만",
+  "prompt": "",
+  "uploads": ["s3://bucket/user/photo.png"],
+  "chat": [],
+  "expected": {
+    "subtype": "style_transfer",
+    "base": {"path": "s3://bucket/user/photo.png"},
+    "references": [],
+    "style_transfer": true,
+    "needs_clarification": false
+  }
+}
