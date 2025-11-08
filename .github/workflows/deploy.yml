@@ -31,6 +31,7 @@ jobs:
   cd:
     name: "CD"
     runs-on: self-hosted
+    needs: ci
     steps:
       - name: Deploy and restart all consumer workers
         run: |
@@ -53,6 +54,7 @@ jobs:
           done
           
           echo "All workers restarted successfully!"
+
 
 
 
