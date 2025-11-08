@@ -35,7 +35,6 @@ jobs:
           eval "$(conda shell.bash hook)"
           conda activate worker
           
-          git fetch origin main
           git reset --hard origin/main
           git pull
           
@@ -48,6 +47,7 @@ jobs:
           done
           
           echo "All workers restarted successfully!"
+
 
 
 
