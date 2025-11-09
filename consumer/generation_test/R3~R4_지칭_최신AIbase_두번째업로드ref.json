@@ -9,7 +9,7 @@
     {
       "role": "AI",
       "contents": [
-        {"type": "IMAGE", "imagePath": "s3://bucket/gen/awehigopaeozsdgwea.png", "description": "", "fromOriginImage": true}
+        {"type": "IMAGE", "imagePath": "s3://bucket/gen/awehigopaeozsdgwea.png", "description": "호랑이가 건물을 부수고 있는 그림", "fromOriginImage": true}
       ]
     },
     {
@@ -26,6 +26,7 @@
     "references": [{"path": "s3://bucket/ai-request/upload_01.png"}],
     "style_transfer": false,
     "needs_clarification": false,
-    "edit_instructions_contains": ""
+    "edit_instructions_contains": "",
+    "image_description_contains": ["호랑이"]
   }
 }

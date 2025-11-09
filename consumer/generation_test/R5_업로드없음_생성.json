@@ -9,6 +9,7 @@
     "references": [],
     "style_transfer": false,
     "needs_clarification": false,
-    "generate_instructions_contains": "호수"
+    "generate_instructions_contains": "호수",
+    "image_description_contains": ["달빛"]
   }
 }

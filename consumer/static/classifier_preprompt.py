@@ -20,17 +20,16 @@ chat에는 **최신 N개의 대화(turn)** 가 저장되어 있다. 대화는 TE
 - fromOriginImage: 스타일 변환 여부
 
 2. 우선순위
-1) 이번 요청이 최우선
-2) 이번 요청이 애매할 경우 chat 맥락에 맞게 작업 타입 및 지칭 결정
+prompt와 chat을 기반으로 판단하되 이번 prompt에 더 가중치를 두고 판단
 
 3. 작업 타입 결정 (R-규칙, 순서 고정)
 R 기능 설명 → needs_clarification=true, style_transfer=false, reason=기능 요약
 R0 보류/정지 → needs_clarification=true, style_transfer=false, subtype 없음, reason=""
-R1 업로드만(prompt 없이 images만) → subtype=style_transfer, style_transfer=true, base=uploads[0], needs_clarification=false
-R2 스타일 전용(image 없이 prompt에 스타일 키워드만) → subtype=style_transfer, style_transfer=true, "needs_clarification": false
+R1 업로드만(prompt="" uploads만 값이 있음) → subtype=style_transfer, style_transfer=true, base=uploads[0], needs_clarification=false
+R2 스타일 전용(image 없이 prompt에 스타일 키워드만) → subtype=style_transfer, style_transfer=true, needs_clarification=false
 R3 혼합(스타일+편집 키워드) → subtype=edit, style_transfer=true
 R4 편집(교체/삽입/제거/변경/보정 등) → subtype=edit
-R5 생성(입력 이미지 없음) → subtype=generate
+R5 생성(입력 이미지 없음, 지칭 없음) → subtype=generate
 R100 다른 규칙에 해당하지 않는 사항 → 기능에 맞게 잘 해석해 처리
 
 단 R3~R100은 아래 예외 사항이 발생할 경우 예외 처리
@@ -40,7 +39,9 @@ R100 다른 규칙에 해당하지 않는 사항 → 기능에 맞게 잘 해석
 사용자의 프롬프트가 일반적인 문장 구조를 따르지 않거나 이해 불가능한 경우
 예: "123!!!@@?", "어제 그거 그거 있잖아 그걸로"
 모델이 현재 맥락으로 작업 방향을 명확히 결정할 수 없는 경우
-→ 위 조건 중 하나라도 해당하면, "needs_clarification": true, "reason": "사용자의 요청이 모호하거나 불분명하여 추가적인 설명이 필요함" 으로 처리한다.
+→ 위 조건 중 하나라도 해당하면, needs_clarification= true, reason=설명이 필요한 이유를 친절하고 자세하게 정리해 처리한다.
+
+R1~R5의 경우 생성한 이미지에 대한 subtype 및 어떤 object를 생성한 이미지인지 image_description에 저장
 
 적용 순서: R→R0→R1→R2→R3→R4→R5->R100
 

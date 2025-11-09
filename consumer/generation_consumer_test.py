@@ -220,6 +220,13 @@ def assert_case(actual_args: Dict, chat_images: List[Dict], uploads: List[str], 
         if key and key not in has:
             diffs.append(f"- generate_instructions_contains: '{key}' not in actual.")
 
+    if _is_specified(expected, "image_description_contains"):
+        keywords = expected["image_description_contains"] or []
+        desc = actual.get("image_description") or ""
+        for kw in keywords:
+            if kw not in desc:
+                diffs.append(f"- image_description_contains: '{kw}' not found in actual='{desc}'")
+
     passed = len(diffs) == 0
     details = "PASS" if passed else "FAIL:\n" + "\n".join(diffs)
     return passed, details, actual
