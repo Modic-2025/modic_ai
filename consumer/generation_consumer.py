@@ -401,7 +401,7 @@ def classify_and_execute(
                     "i": img_counter,  # ← indices[0]로 고를 때 사용할 정수 인덱스
                     "path": img_path,  # ← S3 키 or https URL (그대로 사용)
                     "role": role,  # user/assistant
-                    "desc": desc,  # 선택 설명
+                    "description": desc,  # 선택 설명
                     "fromOriginImage": from_origin_image  # bool
                 })
                 chat_image_map[img_counter] = img_path
@@ -527,8 +527,25 @@ def classify_and_execute(
         img.save(buf, format="PNG")
         buf.seek(0)
         s3_key, file_name, image_name, _ = upload_to_s3(buf.getvalue())
-        message = {"image_path": s3_key, "file_name": file_name, "image_name": image_name, "description": image_description, "style_transfer": style_transfer,
-                   "chat_summary": new_chat_summary}
+
+        from_origin_image = False
+        if isinstance(base_obj, dict) and base_obj.get("fromOriginImage") is True:
+            from_origin_image = True
+
+        for ref in ref_objs:
+            if isinstance(ref, dict) and ref.get("fromOriginImage") is True:
+                from_origin_image = True
+                break
+
+        message = {
+            "image_path": s3_key,
+            "file_name": file_name,
+            "image_name": image_name,
+            "description": image_description,
+            "style_transfer": style_transfer,
+            "chat_summary": new_chat_summary,
+            "fromOriginImage": from_origin_image or style_transfer,
+        }
         return "ok", message
     except Exception as e:
         print(e)
@@ -575,7 +592,7 @@ def on_message(channel, method, properties, body):
                 "extension": "PNG",
                 "description": message["description"],
                 "chatSummary": message["chat_summary"],
-                "fromStyleImage": message["style_transfer"]
+                "fromStyleImage": message["from_origin_image"]
             }
             if safe_publish(channel, IMAGE_GENERATION_CHAT_RESPONSE_QUEUE, json.dumps(resp)):
                 mark_done(request_id)
