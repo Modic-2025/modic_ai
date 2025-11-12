@@ -46,12 +46,10 @@ jobs:
             echo "${{ secrets.PASSWD }}" | sudo -S systemctl restart generation_consumer@$i
           done
           
+          echo "Restarting vote_consumer workers..."
+          for i in 1; do
+            echo "Restarting vote_consumer@$i ..."
+            echo "${{ secrets.PASSWD }}" | sudo -S systemctl restart vote_consumer@$i
+          done
+          
           echo "All workers restarted successfully!"
-
-
-
-
-
-
-
-
