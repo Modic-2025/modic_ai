@@ -544,7 +544,7 @@ def classify_and_execute(
             "description": image_description,
             "style_transfer": style_transfer,
             "chat_summary": new_chat_summary,
-            "fromOriginImage": from_origin_image or style_transfer,
+            "from_origin_image": from_origin_image or style_transfer,
         }
         return "ok", message
     except Exception as e:
