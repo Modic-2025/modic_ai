@@ -1,0 +1,234 @@
+{
+  "name": "R1_업로드만_채팅이후",
+  "prompt": "",
+  "uploads": ["s3://bucket/user/aseguerhedsgwet.png"],
+  "chat": [
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "테스트가 완료되었습니다! 무엇을 도와드릴까요?",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "안녕하세요! 어떻게 도와드릴까요?",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "야",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "무엇을 도와드릴까요? 궁금한 점이 있으시면 말씀해 주세요!",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "aa",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "무엇을 도와드릴까요? 궁금한 점이 있으시면 말씀해 주세요!",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "dd",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "무엇을 도와드릴까요? 궁금한 점이 있으시면 말씀해 주세요!",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "dd",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "무엇을 도와드릴까요? 궁금한 점이 있으시면 말씀해 주세요!",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "dd",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "무엇을 도와드릴까요? 궁금한 점이 있으시면 말씀해 주세요!",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "dd",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "무엇을 도와드릴까요? 궁금한 점이 있으시면 말씀해 주세요!",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "dd",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "무엇을 도와드릴까요? 궁금한 점이 있으시면 말씀해 주세요!",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "dd",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "무엇을 도와드릴까요? 궁금한 점이 있으시면 말씀해 주세요!",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "dd",
+          "text": "테스트",
+          "imagePath": null,
+          "description": null
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "subtype": "style_transfer",
+    "base": {"path": "s3://bucket/user/aseguerhedsgwet.png"},
+    "references": [],
+    "style_transfer": true,
+    "needs_clarification": false
+  }
+}

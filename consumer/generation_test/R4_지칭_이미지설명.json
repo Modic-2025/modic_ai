@@ -1,0 +1,64 @@
+{
+  "name": "R4_지칭_이미지설명",
+  "prompt": "아까 당신이 만들어준 고양이 이미지에서 고양이 형태는 유지하면서 사람처럼 헤엄치는 형태로 만들어주세요",
+  "uploads": [],
+  "chatSummary": "이전에 생성된 고양이 이미지를 기반으로 편집 요청함",
+  "chat": [
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "IMAGE",
+          "imagePath": "s3://bucket/generated-images/uaksetuoinhtuijawiotyruiopietjrhu.png",
+          "description": "알파카",
+          "fromOriginImage": true
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "알파카 이미지 생성해줘.",
+          "imagePath": null,
+          "description": null,
+          "fromOriginImage": null
+        }
+      ]
+    },
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "IMAGE",
+          "imagePath": "s3://bucket/generated-images/f191601f891a493ca0454c028149eb4e.png",
+          "description": "귀여운 고양이",
+          "fromOriginImage": true
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "귀여운 고양이 생성해줘.",
+          "imagePath": null,
+          "description": null,
+          "fromOriginImage": null
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "subtype": "edit",
+    "base": {
+      "path": "s3://bucket/generated-images/f191601f891a493ca0454c028149eb4e.png"
+    },
+    "references": [],
+    "style_transfer": false,
+    "needs_clarification": false,
+    "image_description_contains": ["고양이"]
+  }
+}

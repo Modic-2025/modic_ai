@@ -1,0 +1,17 @@
+{
+  "name": "R2_업로드후_귀여운느낌_생성_혼동",
+  "prompt": "좀 더 귀여운 느낌으로 이미지를 생성해줘",
+  "uploads": ["s3://bucket/user/aseguerhedsgwet.png"],
+  "chatSummary": "",
+  "chat": [],
+  "expected": {
+    "subtype": "edit",
+    "base": {
+      "path": "s3://bucket/user/aseguerhedsgwet.png"
+    },
+    "references": [],
+    "style_transfer": false,
+    "needs_clarification": true,
+    "edit_instructions_contains": "귀여운"
+  }
+}
