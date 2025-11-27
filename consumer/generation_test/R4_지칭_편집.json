@@ -1,0 +1,53 @@
+{
+  "name": "R4_지칭_편집",
+  "prompt": "중간에 이 이미지를 넣어줘.",
+  "uploads": [
+    "s3://bucket/user/waopgjewoaigj.png"
+  ],
+  "chatSummary": "사용자가 원본 이미지를 스타일 변환시킨 상황.",
+  "chat": [
+    {
+      "role": "AI",
+      "contents": [
+        {
+          "type": "IMAGE",
+          "imagePath": "s3://bucket/goprshagowjropfergjj.png",
+          "description": "이전 요청에서 생성된 인상주의 스타일 배경",
+          "fromOriginImage": true
+        }
+      ]
+    },
+    {
+      "role": "USER",
+      "contents": [
+        {
+          "type": "TEXT",
+          "text": "이거 스타일 변환 적용해줘.",
+          "imagePath": null,
+          "description": null,
+          "fromOriginImage": true
+        },
+        {
+          "type": "IMAGE",
+          "imagePath": "s3://bucket/user/ofwaejjsrweosdijk.png",
+          "description": null,
+          "fromOriginImage": null
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "subtype": "edit",
+    "base": {
+      "path": "s3://bucket/goprshagowjropfergjj.png"
+    },
+    "references": [
+      {
+        "path": "s3://bucket/user/waopgjewoaigj.png"
+      }
+    ],
+    "style_transfer": false,
+    "needs_clarification": false,
+    "edit_instructions_contains": ""
+  }
+}
