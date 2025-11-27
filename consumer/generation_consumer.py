@@ -442,8 +442,7 @@ def classify_and_execute(
             {"role": "user", "content": content},  # 한 메시지에 text+image 동시 포함
         ],
         tools=TOOLS,
-        tool_choice={"type": "function", "function": {"name": "route_scenario"}},
-        temperature=0.2,
+        tool_choice={"type": "function", "function": {"name": "route_scenario"}}
     )
     # ── 6) 툴 아웃풋 파싱
     choice = resp.choices[0]
