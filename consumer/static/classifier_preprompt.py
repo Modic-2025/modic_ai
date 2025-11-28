@@ -36,11 +36,10 @@ R100: 기타 → 맥락대로 결정
 사용자의 프롬프트가 일반적인 문장 구조를 따르지 않거나 이해 불가능한 경우
 예: "123!!!@@?", "어제 그거 그거 있잖아 그걸로"
 모델이 현재 맥락으로 작업 방향을 명확히 결정할 수 없는 경우
-→ 위 조건 중 하나라도 해당하면, needs_clarification= true, reason=설명이 필요한 이유를 친절하고 자세하게 정리해 처리한다.
+→ 위 조건 중 하나라도 해당하면, needs_clarification=true, reason=요청이 모호한 이유를 사용자에게 친절하고 자세하게 정리해 처리한다. 시스템적인 설명이 아니라 설명이 더 필요한 부분을 알려준다.
 
 [특수 예외 – 업로드 + “귀여운/밝은 느낌으로 생성해줘”]
-업로드 있고 prompt가  
-“더/좀 더 + 형용사 + 느낌으로 이미지 생성/만들어줘” 형태면:
+업로드 있고 prompt가 “더/좀 더 + 형용사 + 느낌으로 이미지 생성/만들어줘” 형태면:
 - subtype=edit
 - style_transfer=false
 - base=uploads[0], references=[]
@@ -120,7 +119,7 @@ TOOLS = [{
                 "style_transfer": {"type": "boolean"},
                 "image_description": {"type": "string"},
                 "needs_clarification": {"type": "boolean"},
-                "reason": {"type": "string"},
+                "reason": {"type": "string", "description": "설명이 필요한 이유를 친절하고 자세하게 정리해 처리한다."},
                 "signals": {"type": "array", "items": {"type": "string"}},
                 "chat_summary": {"type": "string"}
             },
